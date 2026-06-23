@@ -1,109 +1,39 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend,
 } from "recharts";
-
-// ---- Program data ----
-// Each slot has a target rep range and a list of interchangeable variations.
-const PROGRAM = {
-  Push: [
-    { slot: "Horizontal press", sets: 3, reps: "6–8", options: ["Barbell bench press", "Dumbbell bench press", "Machine chest press", "Push-ups (weighted)"] },
-    { slot: "Vertical press", sets: 3, reps: "8–10", options: ["Standing overhead press", "Seated DB shoulder press", "Machine shoulder press", "Arnold press"] },
-    { slot: "Upper-chest", sets: 2, reps: "10–12", options: ["Incline DB press", "Incline barbell press", "Low-to-high cable flye", "Incline machine press"] },
-    { slot: "Side delts", sets: 2, reps: "12–15", options: ["Dumbbell lateral raise", "Cable lateral raise", "Machine lateral raise"] },
-    { slot: "Triceps", sets: 2, reps: "10–12", options: ["Triceps pushdown", "Dips", "Overhead cable extension", "Skull crushers"] },
-  ],
-  Pull: [
-    { slot: "Vertical pull", sets: 3, reps: "6–10", options: ["Pull-ups", "Lat pulldown", "Assisted pull-ups", "Neutral-grip pulldown"] },
-    { slot: "Horizontal pull", sets: 3, reps: "8–10", options: ["Barbell row", "Dumbbell row", "Seated cable row", "Chest-supported row"] },
-    { slot: "Rear delts", sets: 2, reps: "12–15", options: ["Face pulls", "Rear-delt flye", "Reverse pec deck"] },
-    { slot: "Biceps", sets: 2, reps: "10–12", options: ["Barbell curl", "Dumbbell curl", "Cable curl", "Preacher curl"] },
-    { slot: "Brachialis", sets: 2, reps: "10–12", options: ["Hammer curls", "Reverse curls", "Rope hammer curls"] },
-  ],
-  Legs: [
-    { slot: "Squat pattern", sets: 3, reps: "6–8", options: ["Back squat", "Front squat", "Leg press", "Hack squat", "Goblet squat"] },
-    { slot: "Hip hinge", sets: 3, reps: "8–10", options: ["Romanian deadlift", "Conventional deadlift", "Hip thrust", "Good mornings"] },
-    { slot: "Single-leg", sets: 2, reps: "10/leg", options: ["Walking lunges", "Bulgarian split squats", "Step-ups", "Reverse lunges"] },
-    { slot: "Hamstrings", sets: 2, reps: "10–12", options: ["Lying leg curl", "Seated leg curl", "Nordic curls"] },
-    { slot: "Calves", sets: 3, reps: "12–15", options: ["Standing calf raise", "Seated calf raise", "Leg-press calf raise"] },
-  ],
-};
-
-const MEASUREMENTS = ["Chest", "Waist", "Hips", "L Arm", "R Arm", "L Thigh", "R Thigh", "Shoulders"];
-
-const DEFAULT_SETTINGS = {
-  unit: "kg",            // display label only; existing numbers are not converted
-  rest: 90,              // rest timer seconds
-  proteinTarget: 140,    // g/day
-  sleepTarget: 8,        // hours
-  cardioTarget: 150,     // min/week
-  lastDeload: null,      // date string; set on first load
-};
-
-// ---- Storage helpers (localStorage) ----
-const NS = "ppl-tracker:";
-function loadKey(key, fallback) {
-  try {
-    const r = localStorage.getItem(NS + key);
-    return r ? JSON.parse(r) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function saveKey(key, value) {
-  try {
-    localStorage.setItem(NS + key, JSON.stringify(value));
-  } catch (e) {
-    console.error("save failed", e);
-  }
-}
-
-// ---- Utils ----
-const todayStr = () => new Date().toISOString().slice(0, 10);
-const fmtDate = (s) => new Date(s + "T00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const e1rm = (w, r) => (r > 0 ? Math.round(w * (1 + r / 30) * 10) / 10 : w); // Epley
-const avg = (arr) => (arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : 0);
-function mondayOf(dateStr) {
-  const d = new Date(dateStr + "T00:00");
-  const day = (d.getDay() + 6) % 7; // Mon=0
-  d.setDate(d.getDate() - day);
-  return d.toISOString().slice(0, 10);
-}
-
-// Best set (by e1RM) for an exercise across a list of workouts
-function bestFor(workouts, exName) {
-  let best = null;
-  for (const w of workouts) {
-    for (const l of w.lifts) {
-      if (l.name !== exName) continue;
-      for (const s of l.sets) {
-        const wt = parseFloat(s.w), r = parseInt(s.r);
-        if (!wt || !r) continue;
-        const score = e1rm(wt, r);
-        if (!best || score > best.e1rm) best = { e1rm: score, w: wt, r, date: w.date };
-      }
-    }
-  }
-  return best;
-}
-
-// ---- Theme ----
-const C = {
-  bg: "#0E1116", panel: "#171C24", panel2: "#1E2530", line: "#2A3340",
-  text: "#E6EAF0", dim: "#8A95A5", accent: "#4ADE80", accent2: "#38BDF8", warn: "#FBBF24",
-};
+import {
+  DEFAULT_PROGRAM, DAY_ORDER, GIRTHS, SKINFOLDS_M, SKINFOLDS_F, DEFAULT_SETTINGS,
+  loadKey, saveKey, todayStr, fmtDate, fmtFull, mondayOf, e1rm, avg,
+  bmi, bmiClass, bodyFatJP3, bmr, leanMass, bestFor, nextDay,
+  nowMs, nowClock, fmtClock, fmtDur, hourLabel, dayPart, sessionVolume, timeOfDayStats,
+} from "./core.js";
+import { C, FONT, installFonts } from "./theme.js";
+import { Eyebrow, Card, Stat, Btn, Field, Select, Empty, Pill, chartTip } from "./ui.jsx";
+import Celebrate from "./Celebrate.jsx";
 
 export default function App() {
   const [tab, setTab] = useState("home");
   const [loaded, setLoaded] = useState(false);
-  const [workouts, setWorkouts] = useState([]);
-  const [body, setBody] = useState([]);
+
+  const [workouts, setWorkouts] = useState([]);   // strength sessions
+  const [cardio, setCardio] = useState([]);        // {date, type, minutes, zone, notes}
+  const [body, setBody] = useState([]);            // {date, weight, sleep, stretch, girths:{}, skinfolds:{}}
+  const [foods, setFoods] = useState([]);          // {date, name, kcal, protein, carbs, fat, qty}
+  const [photos, setPhotos] = useState([]);        // {date, dataUrl, note}
+  const [program, setProgram] = useState(DEFAULT_PROGRAM);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [celebrate, setCelebrate] = useState(null);
+
+  useEffect(() => { installFonts(); }, []);
 
   useEffect(() => {
     setWorkouts(loadKey("workouts", []));
+    setCardio(loadKey("cardio", []));
     setBody(loadKey("body", []));
+    setFoods(loadKey("foods", []));
+    setPhotos(loadKey("photos", []));
+    setProgram(loadKey("program", DEFAULT_PROGRAM));
     const s = { ...DEFAULT_SETTINGS, ...loadKey("settings", {}) };
     if (!s.lastDeload) s.lastDeload = todayStr();
     setSettings(s);
@@ -111,43 +41,57 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (loaded) saveKey("workouts", workouts); }, [workouts, loaded]);
+  useEffect(() => { if (loaded) saveKey("cardio", cardio); }, [cardio, loaded]);
   useEffect(() => { if (loaded) saveKey("body", body); }, [body, loaded]);
+  useEffect(() => { if (loaded) saveKey("foods", foods); }, [foods, loaded]);
+  useEffect(() => { if (loaded) saveKey("photos", photos); }, [photos, loaded]);
+  useEffect(() => { if (loaded) saveKey("program", program); }, [program, loaded]);
   useEffect(() => { if (loaded) saveKey("settings", settings); }, [settings, loaded]);
 
   if (!loaded) {
-    return <div style={{ ...wrap, alignItems: "center", justifyContent: "center", color: C.dim }}>Loading…</div>;
+    return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: C.dim }}>Loading…</div>;
   }
 
+  const tabs = [["home", "Home"], ["train", "Train"], ["body", "Body"], ["food", "Food"], ["progress", "Progress"], ["more", "More"]];
+
   return (
-    <div style={wrap}>
-      <header style={{ padding: "18px 18px 4px" }}>
-        <div style={{ fontSize: 11, letterSpacing: 2, color: C.accent, fontWeight: 700 }}>PPL · STRENGTH + HEALTH</div>
-        <h1 style={{ margin: "2px 0 0", fontSize: 24, fontWeight: 800 }}>Your Tracker</h1>
+    <div style={shell}>
+      <header style={{ padding: "20px 18px 8px" }}>
+        <Eyebrow>Push · Pull · Legs</Eyebrow>
+        <h1 style={{ margin: "3px 0 0", fontFamily: FONT.display, fontSize: 26, fontWeight: 800, color: C.ink, letterSpacing: 0.2 }}>
+          Your Tracker
+        </h1>
       </header>
 
-      <nav style={nav}>
-        {[["home", "Home"], ["train", "Train"], ["body", "Body"], ["progress", "Progress"], ["more", "More"]].map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)} style={tabBtn(tab === id)}>{label}</button>
+      <nav style={navBar}>
+        {tabs.map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} style={navTab(tab === id)}>{label}</button>
         ))}
       </nav>
 
-      <main style={{ flex: 1, overflowY: "auto", padding: "14px 16px 90px" }}>
-        {tab === "home" && <Home workouts={workouts} body={body} settings={settings} setSettings={setSettings} />}
-        {tab === "train" && <Train workouts={workouts} setWorkouts={setWorkouts} settings={settings} />}
-        {tab === "body" && <Body body={body} setBody={setBody} settings={settings} />}
-        {tab === "progress" && <Progress workouts={workouts} body={body} settings={settings} />}
-        {tab === "more" && (
-          <More workouts={workouts} setWorkouts={setWorkouts} body={body} setBody={setBody}
-                settings={settings} setSettings={setSettings} />
-        )}
+      <main style={{ flex: 1, overflowY: "auto", padding: "16px 16px 96px" }}>
+        {tab === "home" && <Home {...{ workouts, cardio, body, foods, settings, setSettings }} />}
+        {tab === "train" && <Train {...{ workouts, setWorkouts, cardio, setCardio, program, settings, setCelebrate }} />}
+        {tab === "body" && <Body {...{ body, setBody, photos, setPhotos, settings }} />}
+        {tab === "food" && <Food {...{ foods, setFoods, settings }} />}
+        {tab === "progress" && <Progress {...{ workouts, body, photos, settings }} />}
+        {tab === "more" && <More {...{ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, settings, setSettings }} />}
       </main>
+
+      {celebrate && <Celebrate data={celebrate} onClose={() => setCelebrate(null)} />}
     </div>
   );
 }
 
 // ============================== HOME ==============================
-function Home({ workouts, body, settings, setSettings }) {
+function Home({ workouts, cardio, body, foods, settings, setSettings }) {
   const unit = settings.unit;
+
+  const lastStrength = useMemo(
+    () => [...workouts].sort((a, b) => b.date.localeCompare(a.date))[0],
+    [workouts]
+  );
+  const upcoming = useMemo(() => nextDay(workouts), [workouts]);
 
   const weightData = useMemo(
     () => body.filter((b) => b.weight).map((b) => ({ date: fmtDate(b.date), v: +b.weight })),
@@ -156,15 +100,15 @@ function Home({ workouts, body, settings, setSettings }) {
 
   const last7 = useMemo(() => {
     const cutoff = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+    const todayKcal = foods.filter((f) => f.date === todayStr()).reduce((a, f) => a + (+f.kcal || 0), 0);
     return {
       sessions: workouts.filter((w) => w.date >= cutoff).length,
-      cardio: body.filter((b) => b.date >= cutoff).reduce((a, b) => a + (+b.cardio || 0), 0),
-      avgProtein: avg(body.filter((b) => b.date >= cutoff && b.protein).map((b) => +b.protein)),
+      cardioMin: cardio.filter((c) => c.date >= cutoff).reduce((a, c) => a + (+c.minutes || 0), 0),
       avgSleep: avg(body.filter((b) => b.date >= cutoff && b.sleep).map((b) => +b.sleep)),
+      todayKcal,
     };
-  }, [workouts, body]);
+  }, [workouts, cardio, body, foods]);
 
-  // Weekly tonnage (sum of weight×reps), last 8 weeks
   const volumeData = useMemo(() => {
     const byWeek = {};
     workouts.forEach((w) => {
@@ -176,13 +120,10 @@ function Home({ workouts, body, settings, setSettings }) {
       }));
       byWeek[wk] = (byWeek[wk] || 0) + t;
     });
-    return Object.entries(byWeek)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-8)
+    return Object.entries(byWeek).sort((a, b) => a[0].localeCompare(b[0])).slice(-8)
       .map(([wk, t]) => ({ date: fmtDate(wk), v: Math.round(t) }));
   }, [workouts]);
 
-  // Deload: weeks since last deload
   const weeksSinceDeload = useMemo(() => {
     if (!settings.lastDeload) return 0;
     return Math.floor((Date.now() - new Date(settings.lastDeload + "T00:00").getTime()) / (7 * 864e5));
@@ -190,72 +131,99 @@ function Home({ workouts, body, settings, setSettings }) {
 
   return (
     <div>
+      {/* Up next — the hero */}
+      <section style={{ ...heroCard }}>
+        <div style={{ position: "absolute", inset: 0, background: `radial-gradient(120% 80% at 100% 0%, ${C.goldSoft}, transparent 60%)`, pointerEvents: "none" }} />
+        <Eyebrow>Up next</Eyebrow>
+        <div style={{ fontFamily: FONT.display, fontSize: 32, fontWeight: 800, color: C.ink, lineHeight: 1.1, margin: "6px 0 4px" }}>
+          {upcoming} day
+        </div>
+        <div style={{ color: C.dim, fontSize: 13 }}>
+          {lastStrength ? `Last: ${lastStrength.day} · ${fmtFull(lastStrength.date)}` : "No sessions logged yet — start with Push."}
+        </div>
+      </section>
+
       {weeksSinceDeload >= 6 && (
-        <div style={deloadBanner}>
+        <div style={deload}>
           <div>
-            <strong>Deload time.</strong>
-            <div style={{ fontSize: 12, color: "#3F2D04", marginTop: 2 }}>
-              {weeksSinceDeload} weeks of training — take an easy week (half volume), then resume.
-            </div>
+            <strong style={{ fontWeight: 700 }}>Deload week suggested</strong>
+            <div style={{ fontSize: 12, marginTop: 2, opacity: 0.85 }}>{weeksSinceDeload} weeks since your last one. Halve the volume, then resume.</div>
           </div>
-          <button style={deloadBtn} onClick={() => setSettings({ ...settings, lastDeload: todayStr() })}>
-            Done
-          </button>
+          <button style={deloadBtn} onClick={() => setSettings({ ...settings, lastDeload: todayStr() })}>Mark done</button>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-        <Stat label="Workouts (7d)" value={last7.sessions} sub="of 3 target" color={C.accent} />
-        <Stat label="Cardio (7d)" value={`${last7.cardio}m`} sub={`target ${settings.cardioTarget}m/wk`} color={C.accent2} />
-        <Stat label="Avg sleep" value={last7.avgSleep ? `${last7.avgSleep}h` : "—"} sub={`target ${settings.sleepTarget}h`} color={C.warn} />
-        <Stat label="Avg protein" value={last7.avgProtein ? `${last7.avgProtein}g` : "—"} sub={`target ${settings.proteinTarget}g`} color={C.accent} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "14px 0" }}>
+        <Stat label="Sessions · 7d" value={last7.sessions} sub="of 3 target" accent={C.gold} />
+        <Stat label="Cardio · 7d" value={`${last7.cardioMin}m`} sub={`target ${settings.cardioTarget}m`} accent={C.sage} />
+        <Stat label="Sleep avg" value={last7.avgSleep ? `${last7.avgSleep}h` : "—"} sub={`target ${settings.sleepTarget}h`} accent={C.gold} />
+        <Stat label="Today · kcal" value={last7.todayKcal || "—"} sub={`target ${settings.calorieTarget}`} accent={C.sage} />
       </div>
 
-      <Card title={`Bodyweight (${unit})`}>
+      <Card title="Bodyweight">
         {weightData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={weightData} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={weightData} margin={{ top: 6, right: 8, left: -20, bottom: 0 }}>
               <CartesianGrid stroke={C.line} vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: C.dim, fontSize: 11 }} />
-              <YAxis tick={{ fill: C.dim, fontSize: 11 }} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={tip} />
-              <Line type="monotone" dataKey="v" stroke={C.accent} strokeWidth={2.5} dot={false} name={unit} />
+              <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} domain={["auto", "auto"]} />
+              <Tooltip contentStyle={chartTip} />
+              <Line type="monotone" dataKey="v" stroke={C.gold} strokeWidth={2.5} dot={false} name={unit} />
             </LineChart>
           </ResponsiveContainer>
-        ) : <Empty>Log weight in the Body tab to see the trend.</Empty>}
+        ) : <Empty>Log your weight in Body to draw this trend.</Empty>}
       </Card>
 
-      <Card title={`Weekly volume (${unit} lifted)`}>
+      <Card title="Weekly volume">
         {volumeData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={150}>
-            <BarChart data={volumeData} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart data={volumeData} margin={{ top: 6, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid stroke={C.line} vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: C.dim, fontSize: 11 }} />
-              <YAxis tick={{ fill: C.dim, fontSize: 11 }} />
-              <Tooltip contentStyle={tip} />
-              <Bar dataKey="v" fill={C.accent2} radius={[4, 4, 0, 0]} name={unit} />
+              <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} />
+              <Tooltip contentStyle={chartTip} />
+              <Bar dataKey="v" fill={C.sage} radius={[5, 5, 0, 0]} name={`${unit} lifted`} />
             </BarChart>
           </ResponsiveContainer>
-        ) : <Empty>Log workouts to see your weekly tonnage climb.</Empty>}
-        <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
-          Total weight lifted per week (weight × reps). A slow upward trend = progressive overload working.
-        </div>
+        ) : <Empty>Total weight moved per week. Log a session to begin.</Empty>}
       </Card>
     </div>
   );
 }
 
 // ============================== TRAIN ==============================
-function Train({ workouts, setWorkouts, settings }) {
-  const [day, setDay] = useState("Push");
+function Train({ workouts, setWorkouts, cardio, setCardio, program, settings, setCelebrate }) {
+  const [mode, setMode] = useState("strength"); // strength | cardio
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <Pill active={mode === "strength"} onClick={() => setMode("strength")} style={{ flex: 1, textAlign: "center" }}>Strength</Pill>
+        <Pill active={mode === "cardio"} onClick={() => setMode("cardio")} style={{ flex: 1, textAlign: "center" }}>Cardio</Pill>
+      </div>
+      {mode === "strength"
+        ? <Strength {...{ workouts, setWorkouts, program, settings, setCelebrate }} />
+        : <CardioLog {...{ cardio, setCardio, settings, setCelebrate }} />}
+    </div>
+  );
+}
+
+function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
+  const unit = settings.unit;
+  const [day, setDay] = useState(() => nextDay(workouts));
   const [date, setDate] = useState(todayStr());
   const [entry, setEntry] = useState(null);
-  const [saved, setSaved] = useState(false);
   const [videoFor, setVideoFor] = useState(null);
-  const [prMsg, setPrMsg] = useState(null);
-  const unit = settings.unit;
+  const [startMs, setStartMs] = useState(null); // when first set was logged
+  const [elapsed, setElapsed] = useState(0);
 
-  // Rest timer
+  // live elapsed-time ticker once the session has started
+  useEffect(() => {
+    if (!startMs) return;
+    const id = setInterval(() => setElapsed(Date.now() - startMs), 1000);
+    return () => clearInterval(id);
+  }, [startMs]);
+
+  // rest timer
   const [restEnds, setRestEnds] = useState(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -266,261 +234,522 @@ function Train({ workouts, setWorkouts, settings }) {
   const restLeft = restEnds ? Math.max(0, Math.ceil((restEnds - now) / 1000)) : 0;
   useEffect(() => {
     if (restEnds && restLeft === 0) {
-      // gentle beep when rest is over (if the browser allows it)
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const o = ctx.createOscillator(); const g = ctx.createGain();
         o.connect(g); g.connect(ctx.destination);
-        o.frequency.value = 880; g.gain.value = 0.08;
-        o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 350);
-      } catch { /* silent */ }
+        o.frequency.value = 880; g.gain.value = 0.07; o.start();
+        setTimeout(() => { o.stop(); ctx.close(); }, 320);
+      } catch { /* ignore */ }
       setRestEnds(null);
     }
   }, [restLeft, restEnds]);
   const startRest = () => setRestEnds(Date.now() + settings.rest * 1000);
 
-  // Build a session whenever the day or date changes.
-  useEffect(() => {
-    const dayWorkouts = workouts
-      .filter((w) => w.day === day)
-      .sort((a, b) => b.date.localeCompare(a.date));
-    const lastSession = dayWorkouts[0];
+  const last = useMemo(
+    () => workouts.filter((w) => w.day === day).sort((a, b) => b.date.localeCompare(a.date))[0],
+    [workouts, day]
+  );
+  const lastRef = React.useRef(last);
+  lastRef.current = last;
 
-    const lifts = PROGRAM[day].map((ex) => {
-      const prev = lastSession?.lifts.find((l) => l.slot === ex.slot);
+  useEffect(() => {
+    const ls = lastRef.current;
+    const lifts = (program[day] || []).map((ex) => {
+      const prev = ls?.lifts.find((l) => l.slot === ex.slot);
       const chosen = prev?.name && ex.options.includes(prev.name) ? prev.name : ex.options[0];
-      const sets = Array.from({ length: ex.sets }, (_, i) => ({
-        w: prev?.sets[i]?.w ?? "",
-        r: "",
-      }));
+      const sets = Array.from({ length: ex.sets }, (_, i) => ({ w: prev?.sets[i]?.w ?? "", r: "", ts: null }));
       return { slot: ex.slot, name: chosen, options: ex.options, target: ex.reps, prev, sets };
     });
     setEntry({ date, day, lifts });
+    setStartMs(null);
+    setElapsed(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [day, date]);
+  }, [day, date, program]);
 
   if (!entry) return null;
 
-  const update = (li, si, field, val) => {
+  const update = (li, si, f, v) => setEntry((e) => ({
+    ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, sets: l.sets.map((s, j) => j !== si ? s : { ...s, [f]: v }) }),
+  }));
+  // Stamp a set's completion time when its reps are filled in (live workout only).
+  const stampSet = (li, si) => {
+    const t = Date.now();
+    if (!startMs) setStartMs(t);
     setEntry((e) => ({
-      ...e,
-      lifts: e.lifts.map((l, i) =>
-        i !== li ? l : { ...l, sets: l.sets.map((s, j) => (j !== si ? s : { ...s, [field]: val })) }
-      ),
+      ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, sets: l.sets.map((s, j) => j !== si ? s : { ...s, ts: t }) }),
     }));
   };
-
-  const pickVariation = (li, name) => {
-    setEntry((e) => ({ ...e, lifts: e.lifts.map((l, i) => (i !== li ? l : { ...l, name })) }));
-  };
+  const pick = (li, name) => setEntry((e) => ({ ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, name }) }));
+  const addSet = (li) => setEntry((e) => ({ ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, sets: [...l.sets, { w: l.sets.at(-1)?.w ?? "", r: "", ts: null }] }) }));
+  const addExercise = () => setEntry((e) => ({
+    ...e, lifts: [...e.lifts, { slot: "Custom", name: "Custom exercise", options: ["Custom exercise"], custom: true, target: "—", sets: [{ w: "", r: "", ts: null }] }],
+  }));
+  const renameCustom = (li, name) => setEntry((e) => ({ ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, name, options: [name] }) }));
 
   const save = () => {
+    const endMs = startMs ? Date.now() : null;
     const clean = {
-      date: entry.date,
-      day: entry.day,
-      lifts: entry.lifts
-        .map((l) => ({ slot: l.slot, name: l.name, sets: l.sets.filter((s) => s.w !== "" || s.r !== "") }))
-        .filter((l) => l.sets.length),
+      date: entry.date, day: entry.day,
+      startMs: startMs || null,
+      endMs,
+      lifts: entry.lifts.map((l) => ({
+        slot: l.slot, name: l.name,
+        sets: l.sets.filter((s) => s.w !== "" || s.r !== "").map((s) => ({ w: s.w, r: s.r, ts: s.ts || null })),
+      })).filter((l) => l.sets.length),
     };
     if (!clean.lifts.length) return;
 
-    // PR detection: compare against history *before* this session
     const history = workouts.filter((x) => !(x.date === clean.date && x.day === clean.day));
     const prs = [];
+    let volume = 0, setCount = 0;
     clean.lifts.forEach((l) => {
       const prevBest = bestFor(history, l.name);
-      let sessionBest = null;
+      let sBest = null;
       l.sets.forEach((s) => {
         const wt = parseFloat(s.w), r = parseInt(s.r);
         if (!wt || !r) return;
-        const score = e1rm(wt, r);
-        if (!sessionBest || score > sessionBest.e1rm) sessionBest = { e1rm: score, w: wt, r };
+        volume += wt * r; setCount++;
+        const sc = e1rm(wt, r);
+        if (!sBest || sc > sBest.e1rm) sBest = { e1rm: sc, w: wt, r };
       });
-      if (sessionBest && (!prevBest || sessionBest.e1rm > prevBest.e1rm)) {
-        prs.push(`${l.name}: ${sessionBest.w}${unit} × ${sessionBest.r}`);
-      }
+      if (sBest && (!prevBest || sBest.e1rm > prevBest.e1rm)) prs.push(`${l.name}: ${sBest.w}${unit} × ${sBest.r}`);
     });
+    clean.prCount = prs.length;
 
-    setWorkouts((w) => [...history, clean]);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
-    if (prs.length) {
-      setPrMsg(prs);
-      setTimeout(() => setPrMsg(null), 5000);
-    }
+    // duration stats (only meaningful for a live-logged session)
+    const durMs = clean.startMs && clean.endMs ? clean.endMs - clean.startMs : null;
+    const durStat = durMs ? [{ label: "Duration", value: fmtDur(durMs) }] : [];
+
+    setWorkouts([...history, clean]);
+    setCelebrate({
+      kind: "strength", title: `${clean.day} day`,
+      stats: [
+        { label: "Volume", value: `${Math.round(volume)}` },
+        { label: "Sets", value: setCount },
+        ...durStat,
+      ],
+      prs,
+    });
+    setStartMs(null);
+    setElapsed(0);
   };
 
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {Object.keys(PROGRAM).map((d) => (
-          <button key={d} onClick={() => setDay(d)} style={pill(day === d)}>{d}</button>
-        ))}
+        {DAY_ORDER.map((d) => <Pill key={d} active={day === d} onClick={() => setDay(d)} style={{ flex: 1, textAlign: "center" }}>{d}</Pill>)}
       </div>
 
-      <div style={{ ...row, marginBottom: 12 }}>
-        <span style={{ color: C.dim, fontSize: 13 }}>Date</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={startRest} style={timerBtn}>⏱ {settings.rest}s</button>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} />
-        </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <button onClick={startRest} style={timerBtn}>Rest · {settings.rest}s</button>
+        {startMs
+          ? <span style={{ color: C.gold, fontSize: 14, fontWeight: 700 }}>● {fmtDur(elapsed)}</span>
+          : <span style={{ color: C.faint, fontSize: 12 }}>timer starts on first set</span>}
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={dateInput} />
       </div>
 
       {entry.lifts.map((lift, li) => (
-        <div key={lift.slot} style={liftCard}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-            <span style={{ color: C.dim, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase" }}>{lift.slot}</span>
-            <span style={{ color: C.accent, fontSize: 12 }}>{lift.target} reps</span>
+        <Card key={li} style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <span style={{ color: C.gold, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase" }}>{lift.slot}</span>
+            <span style={{ color: C.dim, fontSize: 12 }}>{lift.target} reps</span>
           </div>
 
-          <select value={lift.name} onChange={(e) => pickVariation(li, e.target.value)} style={select}>
-            {lift.options.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
+          {lift.custom ? (
+            <input value={lift.name} onChange={(e) => renameCustom(li, e.target.value)} placeholder="Name this exercise"
+              style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 12, padding: "12px 13px", fontSize: 15, fontWeight: 500 }} />
+          ) : (
+            <Select value={lift.name} onChange={(v) => pick(li, v)}>
+              {lift.options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </Select>
+          )}
 
-          <button onClick={() => setVideoFor(lift.name)} style={videoBtn}>▶ Watch form demo</button>
+          <button onClick={() => setVideoFor(lift.name)} style={demoBtn}>Watch form demo ↗</button>
 
           {lift.prev && lift.prev.name === lift.name && (
-            <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
-              Last: {lift.prev.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}
+            <div style={{ color: C.faint, fontSize: 11, marginTop: 8 }}>
+              Last · {lift.prev.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}
             </div>
           )}
 
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 7 }}>
             {lift.sets.map((s, si) => (
               <div key={si} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ color: C.dim, fontSize: 12, width: 38 }}>Set {si + 1}</span>
-                <input inputMode="decimal" placeholder={unit} value={s.w}
-                  onChange={(e) => update(li, si, "w", e.target.value)} style={setInput} />
-                <span style={{ color: C.dim }}>×</span>
+                <span style={{ color: C.faint, fontSize: 12, width: 34 }}>{si + 1}</span>
+                <input inputMode="decimal" placeholder={unit} value={s.w} onChange={(e) => update(li, si, "w", e.target.value)} style={setInput} />
+                <span style={{ color: C.faint }}>×</span>
                 <input inputMode="numeric" placeholder="reps" value={s.r}
                   onChange={(e) => update(li, si, "r", e.target.value)}
-                  onBlur={(e) => { if (e.target.value) startRest(); }}
-                  style={setInput} />
+                  onBlur={(e) => { if (e.target.value) { stampSet(li, si); startRest(); } }} style={setInput} />
+                {s.ts && <span style={{ color: C.faint, fontSize: 10, width: 52, textAlign: "right" }}>{fmtClock(s.ts)}</span>}
               </div>
             ))}
           </div>
-        </div>
+          <button onClick={() => addSet(li)} style={addSetBtn}>+ Add set</button>
+        </Card>
       ))}
 
-      <button onClick={save} style={saveBtn}>{saved ? "Saved ✓" : "Save session"}</button>
+      <Btn variant="quiet" onClick={addExercise} style={{ marginBottom: 10 }}>+ Add custom exercise</Btn>
+      <Btn variant="solid" onClick={save}>Finish & save session</Btn>
 
       {videoFor && <VideoModal name={videoFor} onClose={() => setVideoFor(null)} />}
 
       {restEnds && (
-        <button style={restChip} onClick={() => setRestEnds(null)}>
-          Rest {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, "0")} — tap to skip
+        <button onClick={() => setRestEnds(null)} style={restChip}>
+          Rest {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, "0")} · tap to skip
         </button>
-      )}
-
-      {prMsg && (
-        <div style={prToast}>
-          🏆 New PR{prMsg.length > 1 ? "s" : ""}!
-          {prMsg.map((p) => <div key={p} style={{ fontWeight: 600, fontSize: 12, marginTop: 2 }}>{p}</div>)}
-        </div>
       )}
     </div>
   );
 }
 
-// ---------- Video modal ----------
-const PICKED = {
-  "Barbell bench press": "Pp8rHcFVIYg",
-  "Back squat": "bEv6CCg2BC8",
-};
+function CardioLog({ cardio, setCardio, settings, setCelebrate }) {
+  const [form, setForm] = useState({ date: todayStr(), time: "", type: "Zone 2", minutes: "", zone: "2", notes: "" });
+  const types = ["Zone 2", "HIIT", "Run", "Cycle", "Walk", "Row", "Swim", "Other"];
 
-function VideoModal({ name, onClose }) {
-  const picked = PICKED[name];
-  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(name + " proper form technique")}`;
-  const src = picked
-    ? `https://www.youtube-nocookie.com/embed/${picked}?rel=0`
-    : `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(name + " proper form")}`;
+  const save = () => {
+    if (!form.minutes) return;
+    const rec = { ...form, minutes: +form.minutes, time: form.time || nowClock() };
+    setCardio([...cardio.filter((c) => !(c.date === rec.date && c.type === rec.type)), rec].sort((a, b) => a.date.localeCompare(b.date)));
+    setCelebrate({
+      kind: "cardio", title: `${rec.type}`,
+      stats: [{ label: "Minutes", value: rec.minutes }, { label: "Zone", value: rec.zone || "—" }],
+      prs: [],
+    });
+    setForm({ ...form, minutes: "", notes: "" });
+  };
+
+  const recent = [...cardio].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
 
   return (
-    <div style={modalWrap} onClick={onClose}>
-      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <strong style={{ fontSize: 15 }}>{name}</strong>
-          <button onClick={onClose} style={closeBtn}>✕</button>
+    <div>
+      <Card title="Log cardio">
+        <div style={{ ...row, marginBottom: 4, gap: 8 }}>
+          <span style={{ color: C.ink, fontSize: 14 }}>Date & time</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={dateInput} />
+            <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={dateInput} />
+          </div>
         </div>
-        <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 10, overflow: "hidden", background: "#000" }}>
-          <iframe title={`${name} demo`} src={src}
-            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-            allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+        <div style={{ margin: "10px 0" }}>
+          <Select value={form.type} onChange={(v) => setForm({ ...form, type: v })}>
+            {types.map((t) => <option key={t} value={t}>{t}</option>)}
+          </Select>
         </div>
-        <a href={searchUrl} target="_blank" rel="noreferrer" style={moreLink}>More form videos on YouTube ↗</a>
-      </div>
+        <Field label="Minutes" value={form.minutes} onChange={(v) => setForm({ ...form, minutes: v })} inputMode="numeric" placeholder="0" />
+        <Field label="Zone / effort" value={form.zone} onChange={(v) => setForm({ ...form, zone: v })} placeholder="2" />
+        <div style={{ marginTop: 12 }}>
+          <Btn variant="sage" onClick={save}>Finish & save cardio</Btn>
+        </div>
+      </Card>
+
+      {recent.length > 0 && (
+        <Card title="Recent cardio">
+          {recent.map((c, i) => (
+            <div key={i} style={{ ...row, padding: "8px 0", borderBottom: i < recent.length - 1 ? `1px solid ${C.line}` : "none" }}>
+              <span style={{ color: C.ink, fontSize: 14 }}>{c.type}</span>
+              <span style={{ color: C.dim, fontSize: 13 }}>{c.minutes}m · {fmtDate(c.date)}</span>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
+}
+
+// Form-demo modal: opens a YouTube search in a new tab (links never break,
+// unlike embeds which uploaders frequently disable).
+function VideoModal({ name, onClose }) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(name + " proper form technique")}`;
+  useEffect(() => {
+    window.open(url, "_blank", "noopener");
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
 }
 
 // ============================== BODY ==============================
-function Body({ body, setBody, settings }) {
-  const today = todayStr();
-  const [date, setDate] = useState(today);
+function Body({ body, setBody, photos, setPhotos, settings }) {
   const unit = settings.unit;
   const mUnit = unit === "kg" ? "cm" : "in";
+  const [date, setDate] = useState(todayStr());
+  const sites = settings.sex === "female" ? SKINFOLDS_F : SKINFOLDS_M;
 
-  const [form, setForm] = useState({ weight: "", sleep: "", protein: "", cardio: "", measurements: {} });
-
+  const [form, setForm] = useState({ weight: "", sleep: "", stretch: "", time: "", girths: {}, skinfolds: {} });
   useEffect(() => {
     const c = body.find((b) => b.date === date) || {};
-    setForm({
-      weight: c.weight ?? "", sleep: c.sleep ?? "", protein: c.protein ?? "",
-      cardio: c.cardio ?? "", measurements: c.measurements ?? {},
-    });
+    setForm({ weight: c.weight ?? "", sleep: c.sleep ?? "", stretch: c.stretch ?? "", time: c.time ?? "", girths: c.girths ?? {}, skinfolds: c.skinfolds ?? {} });
   }, [date, body]);
 
   const [saved, setSaved] = useState(false);
   const save = () => {
-    const rec = { date, ...form };
-    setBody((b) => [...b.filter((x) => x.date !== date), rec].sort((a, b2) => a.date.localeCompare(b2.date)));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
+    const rec = { date, ...form, time: form.time || nowClock() };
+    setBody([...body.filter((x) => x.date !== date), rec].sort((a, b) => a.date.localeCompare(b.date)));
+    setSaved(true); setTimeout(() => setSaved(false), 1600);
   };
+
+  // live calculations
+  const weightKg = useMemo(() => {
+    const w = parseFloat(form.weight);
+    if (!w) return null;
+    return unit === "kg" ? w : w / 2.2046226;
+  }, [form.weight, unit]);
+  const sfSum = useMemo(() => sites.reduce((a, s) => a + (parseFloat(form.skinfolds[s]) || 0), 0), [form.skinfolds, sites]);
+  const bf = useMemo(() => bodyFatJP3(sfSum, +settings.age, settings.sex), [sfSum, settings.age, settings.sex]);
+  const bmiVal = useMemo(() => bmi(weightKg, +settings.heightCm), [weightKg, settings.heightCm]);
+  const bmrVal = useMemo(() => bmr(weightKg, +settings.heightCm, +settings.age, settings.sex), [weightKg, settings.age, settings.heightCm, settings.sex]);
+  const lean = useMemo(() => leanMass(weightKg, bf), [weightKg, bf]);
+
+  const addPhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      // compress via canvas to keep storage small
+      const img = new Image();
+      img.onload = () => {
+        const max = 720;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const cv = document.createElement("canvas");
+        cv.width = img.width * scale; cv.height = img.height * scale;
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        const dataUrl = cv.toDataURL("image/jpeg", 0.7);
+        setPhotos([...photos, { date, dataUrl, note: "" }].sort((a, b) => a.date.localeCompare(b.date)));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  return (
+    <div>
+      <div style={{ ...row, marginBottom: 12, gap: 8 }}>
+        <span style={{ color: C.dim, fontSize: 13 }}>Date & time</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={dateInput} />
+          <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={dateInput} />
+        </div>
+      </div>
+
+      <Card title="Daily">
+        <Field label={`Bodyweight`} value={form.weight} onChange={(v) => setForm({ ...form, weight: v })} suffix={unit} inputMode="decimal" />
+        <Field label="Sleep" value={form.sleep} onChange={(v) => setForm({ ...form, sleep: v })} suffix="h" inputMode="decimal" />
+        <Field label="Stretching" value={form.stretch} onChange={(v) => setForm({ ...form, stretch: v })} suffix="min" inputMode="numeric" />
+      </Card>
+
+      {(bmiVal || bf != null || bmrVal) && (
+        <Card title="Calculated">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {bmiVal && <MiniStat label="BMI" value={bmiVal} sub={bmiClass(bmiVal)} />}
+            {bf != null && <MiniStat label="Body fat" value={`${bf}%`} sub="JP 3-site" />}
+            {lean && <MiniStat label="Lean mass" value={`${lean}${unit}`} sub="est." />}
+            {bmrVal && <MiniStat label="BMR" value={bmrVal} sub="kcal/day" />}
+          </div>
+          <div style={{ color: C.faint, fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>
+            Body fat uses Jackson-Pollock 3-site ({sites.join(", ")}) with your age & sex from Settings. Estimates, not clinical readings.
+          </div>
+        </Card>
+      )}
+
+      <Card title={`Circumferences · ${mUnit}`}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {GIRTHS.map((g) => (
+            <label key={g} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ color: C.dim, fontSize: 12 }}>{g}</span>
+              <input inputMode="decimal" value={form.girths[g] ?? ""} onChange={(e) => setForm({ ...form, girths: { ...form.girths, [g]: e.target.value } })} style={setInput} />
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Skinfolds · mm">
+        <div style={{ color: C.faint, fontSize: 11, marginBottom: 10 }}>
+          Pinch with a caliper. Sum drives the body-fat estimate above.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {["Chest", "Abdomen (vertical)", "Abdomen (diagonal)", "Below navel", "Thigh", "Triceps", "Suprailiac"].map((s) => (
+            <label key={s} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ color: C.dim, fontSize: 12 }}>{s}</span>
+              <input inputMode="decimal" value={form.skinfolds[s] ?? ""} onChange={(e) => setForm({ ...form, skinfolds: { ...form.skinfolds, [s]: e.target.value } })} style={setInput} />
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Progress photo">
+        <label style={{ ...photoAdd }}>
+          + Add photo for {fmtDate(date)}
+          <input type="file" accept="image/*" onChange={addPhoto} style={{ display: "none" }} />
+        </label>
+        {photos.filter((p) => p.date === date).map((p, i) => (
+          <img key={i} src={p.dataUrl} alt="" style={{ width: "100%", borderRadius: 12, marginTop: 10 }} />
+        ))}
+        <div style={{ color: C.faint, fontSize: 11, marginTop: 8 }}>Stored privately on this device. Compare them over time in Progress.</div>
+      </Card>
+
+      <Btn variant="solid" onClick={save}>{saved ? "Saved ✓" : "Save day"}</Btn>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, sub }) {
+  return (
+    <div style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 14, padding: "12px 14px", textAlign: "center" }}>
+      <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontFamily: FONT.display, fontSize: 22, fontWeight: 600, color: C.gold, margin: "3px 0 1px" }}>{value}</div>
+      <div style={{ color: C.faint, fontSize: 10 }}>{sub}</div>
+    </div>
+  );
+}
+
+// ============================== FOOD ==============================
+function Food({ foods, setFoods, settings }) {
+  const [date, setDate] = useState(todayStr());
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [err, setErr] = useState("");
+  const [manual, setManual] = useState({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
+
+  const dayFoods = useMemo(() => foods.filter((f) => f.date === date), [foods, date]);
+  const totals = useMemo(() => dayFoods.reduce((a, f) => ({
+    kcal: a.kcal + (+f.kcal || 0), protein: a.protein + (+f.protein || 0),
+    carbs: a.carbs + (+f.carbs || 0), fat: a.fat + (+f.fat || 0),
+  }), { kcal: 0, protein: 0, carbs: 0, fat: 0 }), [dayFoods]);
+
+  const search = async () => {
+    if (!q.trim()) return;
+    setSearching(true); setErr(""); setResults([]);
+    try {
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=12&fields=product_name,brands,nutriments`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const items = (data.products || [])
+        .filter((p) => p.product_name && p.nutriments)
+        .map((p) => ({
+          name: [p.product_name, p.brands].filter(Boolean).join(" · ").slice(0, 60),
+          kcal: Math.round(p.nutriments["energy-kcal_100g"] || p.nutriments["energy-kcal"] || 0),
+          protein: Math.round((p.nutriments.proteins_100g || 0) * 10) / 10,
+          carbs: Math.round((p.nutriments.carbohydrates_100g || 0) * 10) / 10,
+          fat: Math.round((p.nutriments.fat_100g || 0) * 10) / 10,
+        }))
+        .filter((p) => p.kcal > 0);
+      if (!items.length) setErr("No matches with nutrition data. Try a simpler term, or add it manually below.");
+      setResults(items);
+    } catch {
+      setErr("Search needs an internet connection. You can still add foods manually below.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const add = (item, qty = 100) => {
+    const factor = qty / 100;
+    setFoods([...foods, {
+      date, time: nowClock(), name: item.name, qty,
+      kcal: Math.round(item.kcal * factor), protein: Math.round(item.protein * factor * 10) / 10,
+      carbs: Math.round(item.carbs * factor * 10) / 10, fat: Math.round(item.fat * factor * 10) / 10,
+    }]);
+  };
+  const addManual = () => {
+    if (!manual.name || !manual.kcal) return;
+    setFoods([...foods, { date, time: nowClock(), ...manual, kcal: +manual.kcal, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0, qty: 1 }]);
+    setManual({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
+  };
+  const remove = (idx) => {
+    const target = dayFoods[idx];
+    setFoods(foods.filter((f) => f !== target));
+  };
+
+  const pct = Math.min(100, Math.round((totals.kcal / settings.calorieTarget) * 100));
 
   return (
     <div>
       <div style={{ ...row, marginBottom: 12 }}>
         <span style={{ color: C.dim, fontSize: 13 }}>Date</span>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} />
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={dateInput} />
       </div>
 
-      <Card title="Daily">
-        <Field label={`Bodyweight (${unit})`} v={form.weight} on={(v) => setForm({ ...form, weight: v })} />
-        <Field label="Sleep (hours)" v={form.sleep} on={(v) => setForm({ ...form, sleep: v })} />
-        <Field label="Protein (g)" v={form.protein} on={(v) => setForm({ ...form, protein: v })} />
-        <Field label="Cardio (min)" v={form.cardio} on={(v) => setForm({ ...form, cardio: v })} last />
-      </Card>
-
-      <Card title={`Measurements (${mUnit})`}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          {MEASUREMENTS.map((m) => (
-            <div key={m} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ color: C.dim, fontSize: 12 }}>{m}</span>
-              <input inputMode="decimal" value={form.measurements[m] ?? ""}
-                onChange={(e) => setForm({ ...form, measurements: { ...form.measurements, [m]: e.target.value } })}
-                style={setInput} />
+      <Card title="Today's intake">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 8 }}>
+          <div style={{ fontFamily: FONT.display, fontSize: 30, fontWeight: 600, color: C.gold }}>
+            {totals.kcal}<span style={{ fontSize: 14, color: C.dim, fontFamily: FONT.body }}> / {settings.calorieTarget} kcal</span>
+          </div>
+        </div>
+        <div style={{ height: 8, background: C.surface2, borderRadius: 99, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: C.gold, transition: "width .3s" }} />
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {[["Protein", totals.protein, "g"], ["Carbs", totals.carbs, "g"], ["Fat", totals.fat, "g"]].map(([l, v, u]) => (
+            <div key={l} style={{ flex: 1, textAlign: "center", background: C.surface2, borderRadius: 12, padding: "10px 0" }}>
+              <div style={{ fontFamily: FONT.display, fontSize: 18, color: C.ink }}>{Math.round(v)}{u}</div>
+              <div style={{ color: C.faint, fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>{l}</div>
             </div>
           ))}
         </div>
       </Card>
 
-      <button onClick={save} style={saveBtn}>{saved ? "Saved ✓" : "Save day"}</button>
+      <Card title="Search food">
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. greek yogurt"
+            onKeyDown={(e) => e.key === "Enter" && search()}
+            style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 12, padding: "12px 13px", fontSize: 14 }} />
+          <button onClick={search} style={{ ...timerBtn, width: "auto", padding: "0 18px" }}>{searching ? "…" : "Find"}</button>
+        </div>
+        {err && <div style={{ color: C.rose, fontSize: 12, marginTop: 10 }}>{err}</div>}
+        {results.map((r, i) => (
+          <div key={i} style={{ ...row, padding: "10px 0", borderBottom: `1px solid ${C.line}`, gap: 8 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.ink, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+              <div style={{ color: C.faint, fontSize: 11 }}>{r.kcal} kcal · P{r.protein} C{r.carbs} F{r.fat} / 100g</div>
+            </div>
+            <button onClick={() => add(r, 100)} style={addMini}>+100g</button>
+          </div>
+        ))}
+        <div style={{ color: C.faint, fontSize: 11, marginTop: 10 }}>Values per 100g from Open Food Facts. Adds a 100g serving — adjust by logging twice or editing intake.</div>
+      </Card>
+
+      <Card title="Add manually">
+        <input value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} placeholder="Food name"
+          style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 12, padding: "11px 13px", fontSize: 14, marginBottom: 8 }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["kcal", "kcal"], ["protein", "P"], ["carbs", "C"], ["fat", "F"]].map(([k, ph]) => (
+            <input key={k} inputMode="numeric" value={manual[k]} onChange={(e) => setManual({ ...manual, [k]: e.target.value })} placeholder={ph}
+              style={{ width: "25%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 8px", fontSize: 13, textAlign: "center" }} />
+          ))}
+        </div>
+        <div style={{ marginTop: 10 }}><Btn variant="quiet" onClick={addManual}>Add food</Btn></div>
+      </Card>
+
+      {dayFoods.length > 0 && (
+        <Card title="Logged today">
+          {dayFoods.map((f, i) => (
+            <div key={i} style={{ ...row, padding: "9px 0", borderBottom: i < dayFoods.length - 1 ? `1px solid ${C.line}` : "none" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: C.ink, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
+                <div style={{ color: C.faint, fontSize: 11 }}>{f.time ? `${f.time} · ` : ""}{f.kcal} kcal · P{f.protein}</div>
+              </div>
+              <button onClick={() => remove(i)} style={{ ...addMini, color: C.rose, borderColor: C.line }}>✕</button>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }
 
 // ============================== PROGRESS ==============================
-function Progress({ workouts, body, settings }) {
+function Progress({ workouts, body, photos, settings }) {
   const unit = settings.unit;
   const mUnit = unit === "kg" ? "cm" : "in";
 
-  // Exercises with logged data
   const exercises = useMemo(() => {
     const counts = {};
     workouts.forEach((w) => w.lifts.forEach((l) => {
-      const hasData = l.sets.some((s) => parseFloat(s.w) && parseInt(s.r));
-      if (hasData) counts[l.name] = (counts[l.name] || 0) + 1;
+      if (l.sets.some((s) => parseFloat(s.w) && parseInt(s.r))) counts[l.name] = (counts[l.name] || 0) + 1;
     }));
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([n]) => n);
   }, [workouts]);
@@ -528,224 +757,323 @@ function Progress({ workouts, body, settings }) {
   const [exercise, setExercise] = useState("");
   useEffect(() => { if (!exercise && exercises.length) setExercise(exercises[0]); }, [exercises, exercise]);
 
-  // e1RM + top weight per session for selected exercise
   const exData = useMemo(() => {
     if (!exercise) return [];
     const rows = [];
     [...workouts].sort((a, b) => a.date.localeCompare(b.date)).forEach((w) => {
-      let best = null, topW = 0;
-      w.lifts.filter((l) => l.name === exercise).forEach((l) =>
-        l.sets.forEach((s) => {
-          const wt = parseFloat(s.w), r = parseInt(s.r);
-          if (!wt || !r) return;
-          const score = e1rm(wt, r);
-          if (!best || score > best) best = score;
-          if (wt > topW) topW = wt;
-        })
-      );
-      if (best) rows.push({ date: fmtDate(w.date), e1RM: best, top: topW });
+      let best = null, top = 0;
+      w.lifts.filter((l) => l.name === exercise).forEach((l) => l.sets.forEach((s) => {
+        const wt = parseFloat(s.w), r = parseInt(s.r);
+        if (!wt || !r) return;
+        const sc = e1rm(wt, r);
+        if (!best || sc > best) best = sc;
+        if (wt > top) top = wt;
+      }));
+      if (best) rows.push({ date: fmtDate(w.date), e1RM: best, top });
     });
     return rows;
   }, [workouts, exercise]);
 
   const record = useMemo(() => (exercise ? bestFor(workouts, exercise) : null), [workouts, exercise]);
 
-  // Measurement trends
-  const [measure, setMeasure] = useState(MEASUREMENTS[1]); // Waist default
-  const mData = useMemo(
-    () => body
-      .filter((b) => b.measurements && b.measurements[measure])
-      .map((b) => ({ date: fmtDate(b.date), v: parseFloat(b.measurements[measure]) }))
-      .filter((p) => !isNaN(p.v)),
-    [body, measure]
-  );
+  const [measure, setMeasure] = useState("Waist");
+  const mData = useMemo(() => body
+    .filter((b) => b.girths && b.girths[measure])
+    .map((b) => ({ date: fmtDate(b.date), v: parseFloat(b.girths[measure]) }))
+    .filter((p) => !isNaN(p.v)), [body, measure]);
 
-  if (!exercises.length) {
-    return <Empty>Log a few workouts and your strength charts will appear here.</Empty>;
+  const bfData = useMemo(() => {
+    const sites = settings.sex === "female" ? SKINFOLDS_F : SKINFOLDS_M;
+    return body.map((b) => {
+      const sum = sites.reduce((a, s) => a + (parseFloat(b.skinfolds?.[s]) || 0), 0);
+      const bf = bodyFatJP3(sum, +settings.age, settings.sex);
+      return bf != null ? { date: fmtDate(b.date), v: bf } : null;
+    }).filter(Boolean);
+  }, [body, settings]);
+
+  const photoList = [...photos].sort((a, b) => a.date.localeCompare(b.date));
+
+  // time-of-day analytics
+  const todStats = useMemo(() => timeOfDayStats(workouts), [workouts]);
+  const todData = useMemo(() => todStats.map((t) => ({
+    label: hourLabel(t.hour), avgVol: t.avgVol, count: t.count, part: dayPart(t.hour),
+  })), [todStats]);
+  const totalTimed = useMemo(() => workouts.filter((w) => w.startMs).length, [workouts]);
+  const bestWindow = useMemo(() => {
+    if (todStats.length === 0) return null;
+    return [...todStats].sort((a, b) => b.avgVol - a.avgVol)[0];
+  }, [todStats]);
+
+  // session-duration trend
+  const durData = useMemo(() => [...workouts]
+    .filter((w) => w.startMs && w.endMs)
+    .sort((a, b) => a.startMs - b.startMs)
+    .map((w) => ({ date: fmtDate(w.date), v: Math.round((w.endMs - w.startMs) / 60000) })), [workouts]);
+
+  if (!exercises.length && !mData.length && !photoList.length) {
+    return <Empty>Log workouts, measurements, or photos and your progress will appear here.</Empty>;
   }
 
   return (
     <div>
-      <Card title="Strength progress">
-        <select value={exercise} onChange={(e) => setExercise(e.target.value)} style={{ ...select, marginBottom: 10 }}>
-          {exercises.map((e) => <option key={e} value={e}>{e}</option>)}
-        </select>
-
-        {record && (
-          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-            <div style={recordBox}>
-              <div style={{ color: C.dim, fontSize: 11 }}>BEST SET</div>
-              <div style={{ fontWeight: 800, fontSize: 18, color: C.accent }}>{record.w}{unit} × {record.r}</div>
-              <div style={{ color: C.dim, fontSize: 11 }}>{fmtDate(record.date)}</div>
+      {exercises.length > 0 && (
+        <Card title="Strength">
+          <Select value={exercise} onChange={setExercise} style={{ marginBottom: 12 }}>
+            {exercises.map((e) => <option key={e} value={e}>{e}</option>)}
+          </Select>
+          {record && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+              <MiniStat label="Best set" value={`${record.w}×${record.r}`} sub={fmtDate(record.date)} />
+              <MiniStat label="Est. 1RM" value={`${record.e1rm}${unit}`} sub="Epley" />
             </div>
-            <div style={recordBox}>
-              <div style={{ color: C.dim, fontSize: 11 }}>EST. 1RM</div>
-              <div style={{ fontWeight: 800, fontSize: 18, color: C.accent2 }}>{record.e1rm}{unit}</div>
-              <div style={{ color: C.dim, fontSize: 11 }}>Epley formula</div>
-            </div>
-          </div>
-        )}
+          )}
+          {exData.length > 1 ? (
+            <ResponsiveContainer width="100%" height={190}>
+              <LineChart data={exData} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid stroke={C.line} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+                <YAxis tick={{ fill: C.faint, fontSize: 11 }} domain={["auto", "auto"]} />
+                <Tooltip contentStyle={chartTip} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="e1RM" stroke={C.gold} strokeWidth={2.5} dot={{ r: 2.5 }} name={`1RM (${unit})`} />
+                <Line type="monotone" dataKey="top" stroke={C.sage} strokeWidth={2} dot={{ r: 2.5 }} name={`top (${unit})`} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <Empty>Log this lift twice to see the trend.</Empty>}
+        </Card>
+      )}
 
-        {exData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={190}>
-            <LineChart data={exData} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
+      {bfData.length > 1 && (
+        <Card title="Body fat %">
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={bfData} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
               <CartesianGrid stroke={C.line} vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: C.dim, fontSize: 11 }} />
-              <YAxis tick={{ fill: C.dim, fontSize: 11 }} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={tip} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="e1RM" stroke={C.accent2} strokeWidth={2.5} dot={{ r: 3 }} name={`est. 1RM (${unit})`} />
-              <Line type="monotone" dataKey="top" stroke={C.accent} strokeWidth={2} dot={{ r: 3 }} name={`top weight (${unit})`} />
+              <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} domain={["auto", "auto"]} />
+              <Tooltip contentStyle={chartTip} />
+              <Line type="monotone" dataKey="v" stroke={C.rose} strokeWidth={2.5} dot={{ r: 2.5 }} name="BF%" />
             </LineChart>
           </ResponsiveContainer>
-        ) : <Empty>Two or more sessions of this exercise will draw the trend.</Empty>}
-        <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
-          Estimated 1RM converts weight × reps into one comparable strength number — if this line climbs, you're getting stronger.
-        </div>
-      </Card>
+        </Card>
+      )}
 
-      <Card title={`Measurement trend (${mUnit})`}>
-        <select value={measure} onChange={(e) => setMeasure(e.target.value)} style={{ ...select, marginBottom: 10 }}>
-          {MEASUREMENTS.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
+      <Card title={`Measurement · ${mUnit}`}>
+        <Select value={measure} onChange={setMeasure} style={{ marginBottom: 12 }}>
+          {GIRTHS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </Select>
         {mData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={mData} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={mData} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
               <CartesianGrid stroke={C.line} vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: C.dim, fontSize: 11 }} />
-              <YAxis tick={{ fill: C.dim, fontSize: 11 }} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={tip} />
-              <Line type="monotone" dataKey="v" stroke={C.warn} strokeWidth={2.5} dot={{ r: 3 }} name={mUnit} />
+              <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} domain={["auto", "auto"]} />
+              <Tooltip contentStyle={chartTip} />
+              <Line type="monotone" dataKey="v" stroke={C.gold} strokeWidth={2.5} dot={{ r: 2.5 }} name={mUnit} />
             </LineChart>
           </ResponsiveContainer>
-        ) : <Empty>Log this measurement on two or more days to see its trend.</Empty>}
+        ) : <Empty>Log this measurement on two days to see its trend.</Empty>}
       </Card>
 
-      <Card title="All records">
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {exercises.map((ex) => {
-            const r = bestFor(workouts, ex);
-            return r ? (
-              <div key={ex} style={{ ...row, fontSize: 13 }}>
-                <span>{ex}</span>
-                <span style={{ color: C.accent, fontWeight: 700 }}>{r.w}{unit} × {r.r}</span>
+      {durData.length > 1 && (
+        <Card title="Session duration">
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={durData} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
+              <CartesianGrid stroke={C.line} vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} />
+              <Tooltip contentStyle={chartTip} />
+              <Bar dataKey="v" fill={C.sage} radius={[5, 5, 0, 0]} name="minutes" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ color: C.faint, fontSize: 11, marginTop: 6 }}>Minutes per session, from live-logged workouts.</div>
+        </Card>
+      )}
+
+      {todData.length > 0 && (
+        <Card title="When you train best">
+          {bestWindow && (
+            <div style={{ marginBottom: 12 }}>
+              <MiniStat label="Strongest window" value={`${hourLabel(bestWindow.hour)} · ${dayPart(bestWindow.hour)}`} sub={`avg ${bestWindow.avgVol} volume`} />
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={todData} margin={{ top: 6, right: 8, left: -14, bottom: 0 }}>
+              <CartesianGrid stroke={C.line} vertical={false} />
+              <XAxis dataKey="label" tick={{ fill: C.faint, fontSize: 11 }} />
+              <YAxis tick={{ fill: C.faint, fontSize: 11 }} />
+              <Tooltip contentStyle={chartTip} />
+              <Bar dataKey="avgVol" fill={C.gold} radius={[5, 5, 0, 0]} name="avg volume" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ color: C.faint, fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+            {totalTimed < 8
+              ? `Based on ${totalTimed} timed session${totalTimed === 1 ? "" : "s"} — early signal, will sharpen as you log more.`
+              : `Average training volume by hour of day, across ${totalTimed} timed sessions.`}
+          </div>
+        </Card>
+      )}
+
+      {photoList.length > 0 && (
+        <Card title="Photo timeline">
+          <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+            {photoList.map((p, i) => (
+              <div key={i} style={{ flexShrink: 0, width: 130 }}>
+                <img src={p.dataUrl} alt="" style={{ width: 130, height: 170, objectFit: "cover", borderRadius: 12, border: `1px solid ${C.line}` }} />
+                <div style={{ color: C.faint, fontSize: 11, textAlign: "center", marginTop: 4 }}>{fmtDate(p.date)}</div>
               </div>
-            ) : null;
-          })}
-        </div>
-      </Card>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
 
 // ============================== MORE ==============================
-function More({ workouts, setWorkouts, body, setBody, settings, setSettings }) {
+function More(props) {
   const [section, setSection] = useState("settings");
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        {[["settings", "Settings"], ["data", "Data"], ["history", "History"]].map(([id, label]) => (
-          <button key={id} onClick={() => setSection(id)} style={pill(section === id)}>{label}</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[["settings", "Settings"], ["program", "Program"], ["data", "Data"], ["history", "History"]].map(([id, l]) => (
+          <Pill key={id} active={section === id} onClick={() => setSection(id)}>{l}</Pill>
         ))}
       </div>
-      {section === "settings" && <Settings settings={settings} setSettings={setSettings} />}
-      {section === "data" && <Data workouts={workouts} setWorkouts={setWorkouts} body={body} setBody={setBody} />}
-      {section === "history" && <History workouts={workouts} setWorkouts={setWorkouts} body={body} setBody={setBody} />}
+      {section === "settings" && <Settings settings={props.settings} setSettings={props.setSettings} />}
+      {section === "program" && <ProgramEditor program={props.program} setProgram={props.setProgram} />}
+      {section === "data" && <DataPanel {...props} />}
+      {section === "history" && <History {...props} />}
     </div>
   );
 }
 
-// ---------- Settings ----------
 function Settings({ settings, setSettings }) {
   const set = (k, v) => setSettings({ ...settings, [k]: v });
   return (
     <div>
-      <Card title="Units & timer">
-        <div style={{ ...row, marginBottom: 12 }}>
-          <span style={{ fontSize: 14 }}>Weight unit</span>
+      <Card title="About you">
+        <div style={{ ...row, padding: "11px 0", borderBottom: `1px solid ${C.line}` }}>
+          <span style={{ color: C.ink, fontSize: 14 }}>Sex (for formulas)</span>
           <div style={{ display: "flex", gap: 6 }}>
-            {["kg", "lb"].map((u) => (
-              <button key={u} onClick={() => set("unit", u)} style={pillSmall(settings.unit === u)}>{u}</button>
-            ))}
+            {["male", "female"].map((s) => <Pill key={s} active={settings.sex === s} onClick={() => set("sex", s)}>{s}</Pill>)}
           </div>
         </div>
-        <div style={{ color: C.dim, fontSize: 11, marginBottom: 12, marginTop: -6 }}>
-          Changes labels only — logged numbers aren't converted.
+        <Field label="Age" value={settings.age} onChange={(v) => set("age", v)} suffix="yr" inputMode="numeric" />
+        <Field label="Height" value={settings.heightCm} onChange={(v) => set("heightCm", v)} suffix="cm" inputMode="numeric" />
+      </Card>
+
+      <Card title="Units & timer">
+        <div style={{ ...row, padding: "11px 0", borderBottom: `1px solid ${C.line}` }}>
+          <span style={{ color: C.ink, fontSize: 14 }}>Weight unit</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["kg", "lb"].map((u) => <Pill key={u} active={settings.unit === u} onClick={() => set("unit", u)}>{u}</Pill>)}
+          </div>
         </div>
-        <Field label="Rest timer (seconds)" v={settings.rest} on={(v) => set("rest", parseInt(v) || 0)} last />
+        <Field label="Rest timer" value={settings.rest} onChange={(v) => set("rest", parseInt(v) || 0)} suffix="s" inputMode="numeric" />
       </Card>
 
       <Card title="Targets">
-        <Field label="Protein (g/day)" v={settings.proteinTarget} on={(v) => set("proteinTarget", parseInt(v) || 0)} />
-        <Field label="Sleep (h/night)" v={settings.sleepTarget} on={(v) => set("sleepTarget", parseFloat(v) || 0)} />
-        <Field label="Cardio (min/week)" v={settings.cardioTarget} on={(v) => set("cardioTarget", parseInt(v) || 0)} last />
+        <Field label="Calories" value={settings.calorieTarget} onChange={(v) => set("calorieTarget", parseInt(v) || 0)} suffix="kcal" inputMode="numeric" />
+        <Field label="Protein" value={settings.proteinTarget} onChange={(v) => set("proteinTarget", parseInt(v) || 0)} suffix="g" inputMode="numeric" />
+        <Field label="Sleep" value={settings.sleepTarget} onChange={(v) => set("sleepTarget", parseFloat(v) || 0)} suffix="h" inputMode="decimal" />
+        <Field label="Cardio / wk" value={settings.cardioTarget} onChange={(v) => set("cardioTarget", parseInt(v) || 0)} suffix="m" inputMode="numeric" />
       </Card>
 
       <Card title="Deload">
-        <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.6, marginBottom: 10 }}>
-          Last deload: <span style={{ color: C.text }}>{settings.lastDeload ? fmtDate(settings.lastDeload) : "—"}</span>.
-          A banner appears on Home after 6 weeks of training.
-        </div>
-        <button style={dataBtn} onClick={() => set("lastDeload", todayStr())}>Mark deload done today</button>
+        <div style={{ color: C.dim, fontSize: 13, marginBottom: 10 }}>Last: {settings.lastDeload ? fmtDate(settings.lastDeload) : "—"}. Banner appears after 6 weeks.</div>
+        <Btn variant="quiet" onClick={() => set("lastDeload", todayStr())}>Mark deload done today</Btn>
       </Card>
     </div>
   );
 }
 
-// ---------- Data (export / import) ----------
-function Data({ workouts, setWorkouts, body, setBody }) {
+function ProgramEditor({ program, setProgram }) {
+  const [day, setDay] = useState("Push");
+  const slots = program[day] || [];
+
+  const update = (i, field, value) => {
+    const next = { ...program, [day]: slots.map((s, idx) => idx !== i ? s : { ...s, [field]: value }) };
+    setProgram(next);
+  };
+  const updateOptions = (i, text) => update(i, "options", text.split(",").map((s) => s.trim()).filter(Boolean));
+  const addSlot = () => setProgram({ ...program, [day]: [...slots, { slot: "New slot", sets: 3, reps: "8–12", options: ["New exercise"] }] });
+  const removeSlot = (i) => setProgram({ ...program, [day]: slots.filter((_, idx) => idx !== i) });
+  const reset = () => setProgram(DEFAULT_PROGRAM);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {DAY_ORDER.map((d) => <Pill key={d} active={day === d} onClick={() => setDay(d)} style={{ flex: 1, textAlign: "center" }}>{d}</Pill>)}
+      </div>
+      {slots.map((s, i) => (
+        <Card key={i} style={{ marginBottom: 10 }}>
+          <input value={s.slot} onChange={(e) => update(i, "slot", e.target.value)} placeholder="Slot name"
+            style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 12px", fontSize: 14, fontWeight: 600, marginBottom: 8 }} />
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <input value={s.sets} onChange={(e) => update(i, "sets", parseInt(e.target.value) || 1)} inputMode="numeric"
+              style={{ width: "50%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 12px", fontSize: 13 }} placeholder="sets" />
+            <input value={s.reps} onChange={(e) => update(i, "reps", e.target.value)}
+              style={{ width: "50%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 12px", fontSize: 13 }} placeholder="reps e.g. 8–12" />
+          </div>
+          <textarea value={s.options.join(", ")} onChange={(e) => updateOptions(i, e.target.value)} rows={2}
+            style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 12px", fontSize: 13, resize: "vertical" }}
+            placeholder="Variations, comma-separated" />
+          <button onClick={() => removeSlot(i)} style={{ ...addMini, color: C.rose, marginTop: 8 }}>Remove slot</button>
+        </Card>
+      ))}
+      <Btn variant="quiet" onClick={addSlot} style={{ marginBottom: 10 }}>+ Add slot to {day}</Btn>
+      <Btn variant="danger" onClick={reset}>Reset program to default</Btn>
+    </div>
+  );
+}
+
+function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, settings, setSettings }) {
   const [msg, setMsg] = useState("");
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(""), 2500); };
+  const stamp = () => new Date().toISOString().slice(0, 10);
 
   const download = (filename, text, type) => {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   };
-  const stamp = () => new Date().toISOString().slice(0, 10);
 
   const exportJSON = () => {
-    const payload = { exportedAt: new Date().toISOString(), version: 1, workouts, body };
-    download(`ppl-tracker-backup-${stamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    download(`atelier-backup-${stamp()}.json`,
+      JSON.stringify({ exportedAt: new Date().toISOString(), version: 2, workouts, cardio, body, foods, photos, program, settings }, null, 2),
+      "application/json");
     flash("JSON backup downloaded.");
   };
 
   const exportCSV = () => {
-    const wRows = [["date", "day", "slot", "exercise", "set", "weight", "reps"]];
-    workouts.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((w) =>
-      w.lifts.forEach((l) =>
-        l.sets.forEach((s, i) => wRows.push([w.date, w.day, l.slot || "", l.name, i + 1, s.w, s.r]))
-      )
-    );
-    download(`ppl-workouts-${stamp()}.csv`, toCSV(wRows), "text/csv");
+    const w = [["date", "day", "slot", "exercise", "set", "weight", "reps"]];
+    workouts.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((s) =>
+      s.lifts.forEach((l) => l.sets.forEach((st, i) => w.push([s.date, s.day, l.slot || "", l.name, i + 1, st.w, st.r]))));
+    download(`atelier-workouts-${stamp()}.csv`, toCSV(w), "text/csv");
 
-    const bRows = [["date", "weight", "sleep", "protein", "cardio", ...MEASUREMENTS]];
-    body.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((b2) =>
-      bRows.push([
-        b2.date, b2.weight ?? "", b2.sleep ?? "", b2.protein ?? "", b2.cardio ?? "",
-        ...MEASUREMENTS.map((m) => (b2.measurements && b2.measurements[m]) || ""),
-      ])
-    );
-    download(`ppl-body-${stamp()}.csv`, toCSV(bRows), "text/csv");
-    flash("Two CSV files downloaded (workouts + body).");
+    const b = [["date", "weight", "sleep", "stretch", ...GIRTHS]];
+    body.slice().sort((a, b2) => a.date.localeCompare(b2.date)).forEach((r) =>
+      b.push([r.date, r.weight ?? "", r.sleep ?? "", r.stretch ?? "", ...GIRTHS.map((g) => r.girths?.[g] || "")]));
+    download(`atelier-body-${stamp()}.csv`, toCSV(b), "text/csv");
+    flash("CSV files downloaded.");
   };
 
   const importJSON = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
-        if (!Array.isArray(data.workouts) || !Array.isArray(data.body)) throw new Error("bad shape");
-        setWorkouts(data.workouts);
-        setBody(data.body);
+        const d = JSON.parse(reader.result);
+        if (d.workouts) setWorkouts(d.workouts);
+        if (d.cardio) setCardio(d.cardio);
+        if (d.body) setBody(d.body);
+        if (d.foods) setFoods(d.foods);
+        if (d.photos) setPhotos(d.photos);
+        if (d.program) setProgram(d.program);
+        if (d.settings) setSettings({ ...DEFAULT_SETTINGS, ...d.settings });
         flash("Backup restored.");
-      } catch {
-        flash("Couldn't read that file. Use a JSON backup from this app.");
-      }
+      } catch { flash("Couldn't read that file. Use an Atelier JSON backup."); }
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -754,224 +1082,111 @@ function Data({ workouts, setWorkouts, body, setBody }) {
   return (
     <div>
       <Card title="Export">
-        <p style={dataNote}>JSON is a complete backup you can re-import here; CSV opens in Excel or Google Sheets.</p>
-        <button onClick={exportJSON} style={dataBtn}>Export JSON backup</button>
-        <button onClick={exportCSV} style={{ ...dataBtn, marginTop: 8 }}>Export CSV (workouts + body)</button>
+        <p style={{ color: C.dim, fontSize: 13, margin: "0 0 12px", lineHeight: 1.6 }}>JSON is a full backup you can re-import. CSV opens in Excel or Sheets.</p>
+        <Btn variant="solid" onClick={exportJSON} style={{ marginBottom: 8 }}>Export JSON backup</Btn>
+        <Btn variant="quiet" onClick={exportCSV}>Export CSV</Btn>
       </Card>
-
-      <Card title="Import / restore">
-        <p style={dataNote}>Restore from a JSON backup. This replaces current data — export first if unsure.</p>
-        <label style={{ ...dataBtn, display: "block", textAlign: "center", cursor: "pointer" }}>
+      <Card title="Restore">
+        <p style={{ color: C.dim, fontSize: 13, margin: "0 0 12px", lineHeight: 1.6 }}>Importing replaces current data — export first if unsure.</p>
+        <label style={{ ...photoAdd }}>
           Choose JSON file…
           <input type="file" accept="application/json" onChange={importJSON} style={{ display: "none" }} />
         </label>
       </Card>
-
       <Card title="Summary">
-        <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.7 }}>
-          {workouts.length} workout session{workouts.length === 1 ? "" : "s"} logged.<br />
-          {body.length} body log{body.length === 1 ? "" : "s"} recorded.
+        <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.8 }}>
+          {workouts.length} strength · {cardio.length} cardio · {body.length} body · {foods.length} food · {photos.length} photos
         </div>
       </Card>
-
       {msg && <div style={toast}>{msg}</div>}
     </div>
   );
 }
 
 function toCSV(rows) {
-  return rows.map((r) =>
-    r.map((cell) => {
-      const s = String(cell ?? "");
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(",")
-  ).join("\n");
+  return rows.map((r) => r.map((c) => {
+    const s = String(c ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(",")).join("\n");
 }
 
-// ---------- History ----------
-function History({ workouts, setWorkouts, body, setBody }) {
+function History({ workouts, setWorkouts, cardio, setCardio, body, setBody }) {
   const items = useMemo(() => {
     const w = workouts.map((x) => ({ type: "w", date: x.date, data: x }));
-    const b = body
-      .filter((x) => x.weight || x.sleep || x.protein || x.cardio || Object.keys(x.measurements || {}).length)
+    const c = cardio.map((x) => ({ type: "c", date: x.date, data: x }));
+    const b = body.filter((x) => x.weight || x.sleep || x.stretch || Object.keys(x.girths || {}).length || Object.keys(x.skinfolds || {}).length)
       .map((x) => ({ type: "b", date: x.date, data: x }));
-    return [...w, ...b].sort((a, b2) => b2.date.localeCompare(a.date));
-  }, [workouts, body]);
+    return [...w, ...c, ...b].sort((a, b2) => b2.date.localeCompare(a.date));
+  }, [workouts, cardio, body]);
 
-  if (!items.length) return <Empty>No history yet. Log a workout or body data to get started.</Empty>;
+  if (!items.length) return <Empty>No history yet.</Empty>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {items.map((it, i) => (
-        <div key={i} style={liftCard}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong style={{ fontSize: 14 }}>
-              {fmtDate(it.date)} · {it.type === "w" ? `${it.data.day} session` : "Body log"}
+        <Card key={i} style={{ marginBottom: 0 }}>
+          <div style={{ ...row }}>
+            <strong style={{ fontSize: 14, color: C.ink }}>
+              {fmtDate(it.date)} · {it.type === "w" ? `${it.data.day} session` : it.type === "c" ? `${it.data.type} cardio` : "Body log"}
             </strong>
-            <button
-              onClick={() => {
-                if (it.type === "w") setWorkouts((w) => w.filter((x) => !(x.date === it.date && x.day === it.data.day)));
-                else setBody((b) => b.filter((x) => x.date !== it.date));
-              }}
-              style={delBtn}
-            >
-              Delete
-            </button>
+            <button onClick={() => {
+              if (it.type === "w") setWorkouts((w) => w.filter((x) => !(x.date === it.date && x.day === it.data.day)));
+              else if (it.type === "c") setCardio((c) => c.filter((x) => x !== it.data));
+              else setBody((b) => b.filter((x) => x.date !== it.date));
+            }} style={{ ...addMini, color: C.rose }}>Delete</button>
           </div>
-          {it.type === "w" ? (
-            <div style={{ marginTop: 6, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
-              {it.data.lifts.map((l) => (
-                <div key={l.name}>
-                  <span style={{ color: C.text }}>{l.name}:</span>{" "}
-                  {l.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}
+          {it.type === "w" && (
+            <div style={{ marginTop: 8, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
+              {(it.data.startMs || it.data.endMs) && (
+                <div style={{ color: C.faint, fontSize: 11, marginBottom: 4 }}>
+                  {it.data.startMs ? fmtClock(it.data.startMs) : ""}
+                  {it.data.startMs && it.data.endMs ? ` · ${fmtDur(it.data.endMs - it.data.startMs)}` : ""}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ marginTop: 6, color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
-              {it.data.weight && <span style={chip}>⚖ {it.data.weight}</span>}
-              {it.data.sleep && <span style={chip}>😴 {it.data.sleep}h</span>}
-              {it.data.protein && <span style={chip}>🍗 {it.data.protein}g</span>}
-              {it.data.cardio && <span style={chip}>🏃 {it.data.cardio}m</span>}
-              {Object.entries(it.data.measurements || {}).filter(([, v]) => v).map(([k, v]) => (
-                <span key={k} style={chip}>{k} {v}</span>
+              )}
+              {it.data.lifts.map((l) => (
+                <div key={l.name}><span style={{ color: C.ink }}>{l.name}:</span> {l.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}</div>
               ))}
             </div>
           )}
-        </div>
+          {it.type === "c" && <div style={{ marginTop: 6, color: C.dim, fontSize: 13 }}>{it.data.time ? `${it.data.time} · ` : ""}{it.data.minutes} min · zone {it.data.zone}</div>}
+          {it.type === "b" && (
+            <div style={{ marginTop: 6, color: C.dim, fontSize: 13 }}>
+              {it.data.time && <span style={chip}>🕐 {it.data.time}</span>}
+              {it.data.weight && <span style={chip}>⚖ {it.data.weight}</span>}
+              {it.data.sleep && <span style={chip}>😴 {it.data.sleep}h</span>}
+              {it.data.stretch && <span style={chip}>🧘 {it.data.stretch}m</span>}
+            </div>
+          )}
+        </Card>
       ))}
     </div>
   );
 }
 
-// ---------- Small components ----------
-function Stat({ label, value, sub, color }) {
-  return (
-    <div style={{ ...cardBase, padding: 14 }}>
-      <div style={{ color: C.dim, fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color, lineHeight: 1.1, margin: "2px 0" }}>{value}</div>
-      <div style={{ color: C.dim, fontSize: 11 }}>{sub}</div>
-    </div>
-  );
-}
-function Card({ title, children }) {
-  return (
-    <div style={{ ...cardBase, padding: 14, marginBottom: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, marginBottom: 10, letterSpacing: 0.5 }}>
-        {title.toUpperCase()}
-      </div>
-      {children}
-    </div>
-  );
-}
-function Field({ label, v, on, last }) {
-  return (
-    <div style={{ ...row, paddingBottom: last ? 0 : 10, marginBottom: last ? 0 : 10, borderBottom: last ? "none" : `1px solid ${C.line}` }}>
-      <span style={{ color: C.text, fontSize: 14 }}>{label}</span>
-      <input inputMode="decimal" value={v} onChange={(e) => on(e.target.value)} style={input} placeholder="—" />
-    </div>
-  );
-}
-function Empty({ children }) {
-  return <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: "20px 10px" }}>{children}</div>;
-}
-
-// ---------- Styles ----------
-const wrap = {
+// ---------- styles ----------
+const shell = {
   display: "flex", flexDirection: "column", height: "100vh", maxWidth: 480, margin: "0 auto",
-  background: C.bg, color: C.text, fontFamily: "system-ui, -apple-system, sans-serif",
+  background: C.bg, color: C.ink, fontFamily: FONT.body,
 };
-const nav = { display: "flex", gap: 5, padding: "8px 12px 10px", borderBottom: `1px solid ${C.line}` };
-const tabBtn = (on) => ({
-  flex: 1, padding: "9px 0", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
-  background: on ? C.accent : C.panel2, color: on ? "#0A0E13" : C.dim, whiteSpace: "nowrap",
+const navBar = { display: "flex", gap: 4, padding: "8px 12px 12px", borderBottom: `1px solid ${C.line}`, overflowX: "auto" };
+const navTab = (on) => ({
+  flex: 1, padding: "9px 6px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+  background: on ? C.gold : "transparent", color: on ? C.black : C.dim, whiteSpace: "nowrap", fontFamily: FONT.body,
 });
-const cardBase = { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14 };
-const liftCard = { ...cardBase, padding: 12, marginBottom: 10 };
+const heroCard = {
+  position: "relative", overflow: "hidden", background: C.surface, border: `1px solid ${C.line}`,
+  borderRadius: 20, padding: "20px 18px", marginBottom: 14,
+};
 const row = { display: "flex", justifyContent: "space-between", alignItems: "center" };
-const input = {
-  background: C.panel2, border: `1px solid ${C.line}`, color: C.text, borderRadius: 8,
-  padding: "8px 10px", fontSize: 14, width: 110, textAlign: "right",
-};
-const setInput = {
-  background: C.panel2, border: `1px solid ${C.line}`, color: C.text, borderRadius: 8,
-  padding: "8px 10px", fontSize: 14, width: "100%", textAlign: "center", minWidth: 0, flex: 1,
-};
-const select = {
-  width: "100%", background: C.panel2, border: `1px solid ${C.line}`, color: C.text,
-  borderRadius: 8, padding: "9px 10px", fontSize: 15, fontWeight: 600, appearance: "none",
-};
-const pill = (on) => ({
-  flex: 1, padding: "10px 0", borderRadius: 10, border: `1px solid ${on ? C.accent : C.line}`, cursor: "pointer",
-  background: on ? "rgba(74,222,128,0.12)" : C.panel, color: on ? C.accent : C.dim, fontWeight: 700, fontSize: 14,
-});
-const pillSmall = (on) => ({
-  padding: "6px 16px", borderRadius: 8, border: `1px solid ${on ? C.accent : C.line}`, cursor: "pointer",
-  background: on ? "rgba(74,222,128,0.12)" : C.panel2, color: on ? C.accent : C.dim, fontWeight: 700, fontSize: 13,
-});
-const saveBtn = {
-  width: "100%", padding: 14, marginTop: 6, borderRadius: 12, border: "none", cursor: "pointer",
-  background: C.accent, color: "#0A0E13", fontWeight: 800, fontSize: 15,
-};
-const delBtn = {
-  background: "transparent", border: `1px solid ${C.line}`, color: C.dim, borderRadius: 7,
-  padding: "4px 10px", fontSize: 12, cursor: "pointer",
-};
-const chip = {
-  display: "inline-block", background: C.panel2, borderRadius: 6, padding: "3px 8px",
-  fontSize: 12, marginRight: 6, marginTop: 4, color: C.text,
-};
-const tip = { background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.text };
-const videoBtn = {
-  width: "100%", marginTop: 8, padding: "8px 0", borderRadius: 8, cursor: "pointer",
-  background: "transparent", border: `1px solid ${C.accent2}`, color: C.accent2, fontSize: 13, fontWeight: 600,
-};
-const timerBtn = {
-  background: C.panel2, border: `1px solid ${C.accent2}`, color: C.accent2, borderRadius: 8,
-  padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer",
-};
-const restChip = {
-  position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
-  background: C.accent2, color: "#06222E", border: "none", borderRadius: 24,
-  padding: "12px 22px", fontWeight: 800, fontSize: 14, cursor: "pointer", zIndex: 55,
-  boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
-};
-const prToast = {
-  position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)",
-  background: C.warn, color: "#3F2D04", padding: "12px 20px", borderRadius: 12,
-  fontWeight: 800, fontSize: 14, zIndex: 60, maxWidth: "92%", textAlign: "center",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
-};
-const deloadBanner = {
-  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-  background: C.warn, color: "#3F2D04", borderRadius: 12, padding: "12px 14px", marginBottom: 14,
-  fontSize: 14,
-};
-const deloadBtn = {
-  background: "#3F2D04", color: C.warn, border: "none", borderRadius: 8,
-  padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0,
-};
-const recordBox = { ...cardBase, background: C.panel2, padding: 10, flex: 1, textAlign: "center" };
-const modalWrap = {
-  position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex",
-  alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50,
-};
-const modalCard = {
-  width: "100%", maxWidth: 440, background: C.panel, border: `1px solid ${C.line}`,
-  borderRadius: 16, padding: 16,
-};
-const closeBtn = {
-  background: C.panel2, border: `1px solid ${C.line}`, color: C.text, borderRadius: 8,
-  width: 32, height: 32, cursor: "pointer", fontSize: 14,
-};
-const moreLink = { display: "inline-block", marginTop: 12, color: C.accent2, fontSize: 13, textDecoration: "none", fontWeight: 600 };
-const dataNote = { color: C.dim, fontSize: 13, lineHeight: 1.6, margin: "0 0 12px" };
-const dataBtn = {
-  width: "100%", padding: 13, borderRadius: 10, border: "none", cursor: "pointer",
-  background: C.accent, color: "#0A0E13", fontWeight: 700, fontSize: 14,
-};
-const toast = {
-  position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
-  background: C.accent, color: "#0A0E13", padding: "10px 18px", borderRadius: 10,
-  fontWeight: 700, fontSize: 13, maxWidth: "90%", textAlign: "center", zIndex: 60,
-};
+const dateInput = { background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "9px 11px", fontSize: 14, fontFamily: FONT.body };
+const setInput = { background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px", fontSize: 14, textAlign: "center", flex: 1, minWidth: 0, width: "100%" };
+const timerBtn = { background: C.surface2, border: `1px solid ${C.gold}`, color: C.gold, borderRadius: 10, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT.body };
+const demoBtn = { width: "100%", marginTop: 8, padding: "9px 0", borderRadius: 10, cursor: "pointer", background: "transparent", border: `1px solid ${C.line}`, color: C.dim, fontSize: 13, fontWeight: 500, fontFamily: FONT.body };
+const addSetBtn = { width: "100%", marginTop: 8, padding: "8px 0", borderRadius: 9, cursor: "pointer", background: "transparent", border: `1px dashed ${C.line}`, color: C.faint, fontSize: 12, fontFamily: FONT.body };
+const addMini = { background: "transparent", border: `1px solid ${C.gold}`, color: C.gold, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.body, whiteSpace: "nowrap" };
+const restChip = { position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: C.gold, color: C.black, border: "none", borderRadius: 99, padding: "13px 24px", fontWeight: 700, fontSize: 14, cursor: "pointer", zIndex: 40, boxShadow: "0 6px 24px rgba(0,0,0,0.5)", fontFamily: FONT.body };
+const photoAdd = { display: "block", textAlign: "center", cursor: "pointer", background: C.surface2, border: `1px dashed ${C.line}`, color: C.gold, borderRadius: 12, padding: "14px", fontSize: 14, fontWeight: 500 };
+const chip = { display: "inline-block", background: C.surface2, borderRadius: 7, padding: "3px 9px", fontSize: 12, marginRight: 6, color: C.ink };
+const toast = { position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: C.gold, color: C.black, padding: "11px 20px", borderRadius: 11, fontWeight: 600, fontSize: 13, zIndex: 60, fontFamily: FONT.body };
+const deload = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: C.sageSoft, border: `1px solid ${C.sage}`, color: C.ink, borderRadius: 14, padding: "13px 15px", fontSize: 14 };
+const deloadBtn = { background: C.sage, color: C.black, border: "none", borderRadius: 9, padding: "8px 13px", fontWeight: 600, fontSize: 12, cursor: "pointer", flexShrink: 0, fontFamily: FONT.body };
