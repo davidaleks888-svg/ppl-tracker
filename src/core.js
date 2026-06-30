@@ -47,6 +47,39 @@ export const DEFAULT_SETTINGS = {
   age: 30,
   heightCm: 178,
   calorieTarget: 2400,
+  goal: "muscle", // muscle | cut | longevity | maintain
+};
+
+// Starter daily protocol — fully editable by the user in the Plan tab.
+export const DEFAULT_PLAN = {
+  protocol: `TRAINING
+- Push / Pull / Legs, ~45 min each, progressive overload
+- Beat last week by a rep or small load on key lifts
+- Zone 2 cardio on off days, one HIIT session/week
+
+NUTRITION
+- Protein ~1.8–2.2 g/kg every day
+- Eat at maintenance or slight surplus for muscle
+- Whole foods, vegetables, minimal ultra-processed
+- Stop eating ~3h before bed
+
+SLEEP
+- 7–9 hours, consistent schedule
+- Dark, cool room; no screens before bed
+
+SUPPLEMENTATION
+- Creatine 5g daily
+- Vitamin D, omega-3
+- Protein powder as needed to hit target`,
+  // daily checklist items the user ticks off
+  checklist: [
+    "Hit protein target",
+    "Trained or active recovery",
+    "7+ hours sleep",
+    "Creatine taken",
+    "Steps goal",
+    "No late-night eating",
+  ],
 };
 
 // ---- Storage (localStorage) ----
@@ -186,6 +219,35 @@ export function sessionVolume(w) {
     if (wt && r) v += wt * r;
   }));
   return Math.round(v);
+}
+
+// Average gaps between timestamped sets for one session.
+// Returns { betweenSets, betweenExercises } in seconds, or null where not derivable.
+// "betweenSets": gaps between consecutive stamped sets inside the same exercise.
+// "betweenExercises": gap from an exercise's last stamped set to the next
+// exercise's first stamped set (a transition time — includes setup/walking).
+export function restGaps(w) {
+  // collect stamped sets per lift, preserving order
+  const lifts = (w.lifts || []).map((l) => l.sets.filter((s) => s.ts).map((s) => s.ts));
+  const within = [];
+  const between = [];
+  let prevLiftLast = null;
+  lifts.forEach((stamps) => {
+    if (!stamps.length) return;
+    // gaps within this lift
+    for (let i = 1; i < stamps.length; i++) {
+      const d = stamps[i] - stamps[i - 1];
+      if (d > 0 && d < 1000 * 60 * 20) within.push(d); // ignore >20min outliers
+    }
+    // transition gap from previous lift's last set to this lift's first set
+    if (prevLiftLast != null) {
+      const d = stamps[0] - prevLiftLast;
+      if (d > 0 && d < 1000 * 60 * 30) between.push(d);
+    }
+    prevLiftLast = stamps[stamps.length - 1];
+  });
+  const mean = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length / 1000) : null);
+  return { betweenSets: mean(within), betweenExercises: mean(between) };
 }
 
 // Group sessions by hour-of-day bucket and compute average volume + PR rate.

@@ -1,16 +1,62 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, ReferenceLine,
 } from "recharts";
 import {
-  DEFAULT_PROGRAM, DAY_ORDER, GIRTHS, SKINFOLDS_M, SKINFOLDS_F, DEFAULT_SETTINGS,
+  DEFAULT_PROGRAM, DAY_ORDER, GIRTHS, SKINFOLDS_M, SKINFOLDS_F, DEFAULT_SETTINGS, DEFAULT_PLAN,
   loadKey, saveKey, todayStr, fmtDate, fmtFull, mondayOf, e1rm, avg,
   bmi, bmiClass, bodyFatJP3, bmr, leanMass, bestFor, nextDay,
-  nowMs, nowClock, fmtClock, fmtDur, hourLabel, dayPart, sessionVolume, timeOfDayStats,
+  nowMs, nowClock, fmtClock, fmtDur, hourLabel, dayPart, sessionVolume, timeOfDayStats, restGaps,
 } from "./core.js";
+import { coachInsights, priorityAlerts } from "./coach.js";
 import { C, FONT, installFonts } from "./theme.js";
 import { Eyebrow, Card, Stat, Btn, Field, Select, Empty, Pill, chartTip } from "./ui.jsx";
 import Celebrate from "./Celebrate.jsx";
+
+// Reusable draft autosave for single-screen forms (Body, Food entry, Cardio).
+// Persists `value` under draft:<key>, restores it on mount, flushes on
+// background/close, and clears when you call the returned clear().
+// `active(value)` decides whether the current value is worth saving.
+function useFormDraft(key, value, setValue, active) {
+  const K = "draft:" + key;
+  const ready = React.useRef(false);
+
+  // restore on mount
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(loadKey(K, null)).then((d) => {
+      if (cancelled) return;
+      if (d && active(d)) setValue(d);
+      setTimeout(() => { ready.current = true; }, 0);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // autosave on change
+  useEffect(() => {
+    if (!ready.current) return;
+    if (active(value)) saveKey(K, value);
+    else saveKey(K, null);
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // flush on hide/close
+  useEffect(() => {
+    const flush = () => { try { if (active(value)) saveKey(K, value); } catch { /* ignore */ } };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const clear = () => { ready.current = false; Promise.resolve(saveKey(K, null)); setTimeout(() => { ready.current = true; }, 0); };
+  return clear;
+}
 
 export default function App() {
   const [tab, setTab] = useState("home");
@@ -22,6 +68,8 @@ export default function App() {
   const [foods, setFoods] = useState([]);          // {date, name, kcal, protein, carbs, fat, qty}
   const [photos, setPhotos] = useState([]);        // {date, dataUrl, note}
   const [program, setProgram] = useState(DEFAULT_PROGRAM);
+  const [plan, setPlan] = useState(DEFAULT_PLAN);
+  const [checks, setChecks] = useState({}); // { "YYYY-MM-DD": { "item": true } }
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [celebrate, setCelebrate] = useState(null);
 
@@ -34,6 +82,8 @@ export default function App() {
     setFoods(loadKey("foods", []));
     setPhotos(loadKey("photos", []));
     setProgram(loadKey("program", DEFAULT_PROGRAM));
+    setPlan({ ...DEFAULT_PLAN, ...loadKey("plan", {}) });
+    setChecks(loadKey("checks", {}));
     const s = { ...DEFAULT_SETTINGS, ...loadKey("settings", {}) };
     if (!s.lastDeload) s.lastDeload = todayStr();
     setSettings(s);
@@ -46,13 +96,15 @@ export default function App() {
   useEffect(() => { if (loaded) saveKey("foods", foods); }, [foods, loaded]);
   useEffect(() => { if (loaded) saveKey("photos", photos); }, [photos, loaded]);
   useEffect(() => { if (loaded) saveKey("program", program); }, [program, loaded]);
+  useEffect(() => { if (loaded) saveKey("plan", plan); }, [plan, loaded]);
+  useEffect(() => { if (loaded) saveKey("checks", checks); }, [checks, loaded]);
   useEffect(() => { if (loaded) saveKey("settings", settings); }, [settings, loaded]);
 
   if (!loaded) {
     return <div style={{ ...shell, alignItems: "center", justifyContent: "center", color: C.dim }}>Loading…</div>;
   }
 
-  const tabs = [["home", "Home"], ["train", "Train"], ["body", "Body"], ["food", "Food"], ["progress", "Progress"], ["more", "More"]];
+  const tabs = [["home", "Home"], ["train", "Train"], ["body", "Body"], ["food", "Food"], ["plan", "Plan"], ["progress", "Progress"], ["more", "More"]];
 
   return (
     <div style={shell}>
@@ -74,8 +126,9 @@ export default function App() {
         {tab === "train" && <Train {...{ workouts, setWorkouts, cardio, setCardio, program, settings, setCelebrate }} />}
         {tab === "body" && <Body {...{ body, setBody, photos, setPhotos, settings }} />}
         {tab === "food" && <Food {...{ foods, setFoods, settings }} />}
+        {tab === "plan" && <Plan {...{ plan, setPlan, checks, setChecks, settings, setSettings }} />}
         {tab === "progress" && <Progress {...{ workouts, body, photos, settings }} />}
-        {tab === "more" && <More {...{ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, settings, setSettings }} />}
+        {tab === "more" && <More {...{ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, plan, setPlan, checks, setChecks, settings, setSettings }} />}
       </main>
 
       {celebrate && <Celebrate data={celebrate} onClose={() => setCelebrate(null)} />}
@@ -129,6 +182,14 @@ function Home({ workouts, cardio, body, foods, settings, setSettings }) {
     return Math.floor((Date.now() - new Date(settings.lastDeload + "T00:00").getTime()) / (7 * 864e5));
   }, [settings.lastDeload]);
 
+  const insights = useMemo(
+    () => coachInsights({ workouts, cardio, body, foods, settings }),
+    [workouts, cardio, body, foods, settings]
+  );
+  const goalLabel = { muscle: "Build muscle", cut: "Cut / lose fat", longevity: "Longevity", maintain: "Maintain" }[settings.goal] || "Build muscle";
+  const sevColor = { good: C.sage, info: C.dim, warn: C.rose, alert: C.rose };
+  const sevBg = { good: C.sageSoft, info: "transparent", warn: "rgba(251,191,36,0.10)", alert: "rgba(251,191,36,0.14)" };
+
   return (
     <div>
       {/* Up next — the hero */}
@@ -152,6 +213,30 @@ function Home({ workouts, cardio, body, foods, settings, setSettings }) {
           <button style={deloadBtn} onClick={() => setSettings({ ...settings, lastDeload: todayStr() })}>Mark done</button>
         </div>
       )}
+
+      <Card title="Coach"
+        action={<span style={{ fontSize: 11, color: C.gold, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>{goalLabel}</span>}>
+        {insights.length === 0 ? (
+          <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
+            Log a few workouts and body entries and I'll start reading your trends — plateaus, gaining pace, sleep, and more.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {insights.map((it, i) => (
+              <div key={i} style={{ background: sevBg[it.severity], border: `1px solid ${it.severity === "info" ? C.line : sevColor[it.severity]}`, borderRadius: 12, padding: "10px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 99, background: sevColor[it.severity], flexShrink: 0 }} />
+                  <strong style={{ fontSize: 13, color: C.ink }}>{it.title}</strong>
+                </div>
+                <div style={{ color: C.dim, fontSize: 12, lineHeight: 1.5 }}>{it.detail}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ color: C.faint, fontSize: 10, marginTop: 10, lineHeight: 1.5 }}>
+          Guidance from your own trends — not medical advice. Anything health-related is informational; consult a doctor for clinical decisions.
+        </div>
+      </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "14px 0" }}>
         <Stat label="Sessions · 7d" value={last7.sessions} sub="of 3 target" accent={C.gold} />
@@ -215,6 +300,8 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
   const [videoFor, setVideoFor] = useState(null);
   const [startMs, setStartMs] = useState(null); // when first set was logged
   const [elapsed, setElapsed] = useState(0);
+  const [restored, setRestored] = useState(false); // showed "draft restored" note
+  const draftReady = React.useRef(false); // guards autosave until initial build/restore done
 
   // live elapsed-time ticker once the session has started
   useEffect(() => {
@@ -253,25 +340,99 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
   const lastRef = React.useRef(last);
   lastRef.current = last;
 
+  const DRAFT_KEY = "draftStrength";
+
+  // Build the session — restoring an autosaved draft if one matches this day+date.
   useEffect(() => {
-    const ls = lastRef.current;
-    const lifts = (program[day] || []).map((ex) => {
-      const prev = ls?.lifts.find((l) => l.slot === ex.slot);
-      const chosen = prev?.name && ex.options.includes(prev.name) ? prev.name : ex.options[0];
-      const sets = Array.from({ length: ex.sets }, (_, i) => ({ w: prev?.sets[i]?.w ?? "", r: "", ts: null }));
-      return { slot: ex.slot, name: chosen, options: ex.options, target: ex.reps, prev, sets };
+    draftReady.current = false;
+    let cancelled = false;
+
+    const buildFresh = () => {
+      const ls = lastRef.current;
+      const lifts = (program[day] || []).map((ex) => {
+        const prev = ls?.lifts.find((l) => l.slot === ex.slot);
+        const chosen = prev?.name && ex.options.includes(prev.name) ? prev.name : ex.options[0];
+        const sets = Array.from({ length: ex.sets }, (_, i) => ({ w: prev?.sets[i]?.w ?? "", r: "", ts: null }));
+        return { slot: ex.slot, name: chosen, options: ex.options, target: ex.reps, prev, sets };
+      });
+      return { date, day, lifts };
+    };
+
+    Promise.resolve(loadKey(DRAFT_KEY, null)).then((draft) => {
+      if (cancelled) return;
+      if (draft && draft.entry && draft.entry.day === day && draft.entry.date === date) {
+        // re-attach the live "prev" reference (not stored in the draft)
+        const ls = lastRef.current;
+        const lifts = draft.entry.lifts.map((l) => ({
+          ...l,
+          prev: ls?.lifts.find((x) => x.slot === l.slot) || null,
+        }));
+        setEntry({ ...draft.entry, lifts });
+        setStartMs(draft.startMs || null);
+        setElapsed(draft.startMs ? Date.now() - draft.startMs : 0);
+        setRestored(true);
+        setTimeout(() => setRestored(false), 4000);
+      } else {
+        setEntry(buildFresh());
+        setStartMs(null);
+        setElapsed(0);
+      }
+      // allow autosave on the next tick, after state settles
+      setTimeout(() => { draftReady.current = true; }, 0);
     });
-    setEntry({ date, day, lifts });
-    setStartMs(null);
-    setElapsed(0);
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day, date, program]);
+
+  // Autosave the in-progress draft whenever it changes (after build/restore).
+  useEffect(() => {
+    if (!draftReady.current || !entry) return;
+    // strip the non-serializable/contextual "prev" before saving
+    const slim = { ...entry, lifts: entry.lifts.map(({ prev, ...l }) => l) };
+    saveKey(DRAFT_KEY, { entry: slim, startMs });
+  }, [entry, startMs]);
+
+  // Extra safety: force a draft flush when the app is backgrounded or closed,
+  // in case it happens between keystroke and the autosave effect.
+  useEffect(() => {
+    const flush = () => {
+      if (!entry) return;
+      const slim = { ...entry, lifts: entry.lifts.map(({ prev, ...l }) => l) };
+      try { saveKey(DRAFT_KEY, { entry: slim, startMs }); } catch { /* ignore */ }
+    };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [entry, startMs]);
 
   if (!entry) return null;
 
   const update = (li, si, f, v) => setEntry((e) => ({
     ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, sets: l.sets.map((s, j) => j !== si ? s : { ...s, [f]: v }) }),
   }));
+  // Update a weight, and auto-fill the SAME weight into later sets that are
+  // still empty — since the working weight is usually the same across sets.
+  const updateWeight = (li, si, v) => setEntry((e) => ({
+    ...e, lifts: e.lifts.map((l, i) => {
+      if (i !== li) return l;
+      return {
+        ...l,
+        sets: l.sets.map((s, j) => {
+          if (j === si) return { ...s, w: v };
+          if (j > si && (s.w === "" || s.w == null)) return { ...s, w: v }; // fill empties below
+          return s;
+        }),
+      };
+    }),
+  }));
+  const setNote = (li, field, v) => setEntry((e) => ({ ...e, lifts: e.lifts.map((l, i) => i !== li ? l : { ...l, [field]: v }) }));
   // Stamp a set's completion time when its reps are filled in (live workout only).
   const stampSet = (li, si) => {
     const t = Date.now();
@@ -295,6 +456,7 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
       endMs,
       lifts: entry.lifts.map((l) => ({
         slot: l.slot, name: l.name,
+        note: l.note || "", rpe: l.rpe || "",
         sets: l.sets.filter((s) => s.w !== "" || s.r !== "").map((s) => ({ w: s.w, r: s.r, ts: s.ts || null })),
       })).filter((l) => l.sets.length),
     };
@@ -331,8 +493,38 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
       ],
       prs,
     });
+
+    // session committed — clear the autosaved draft and start a fresh sheet
+    draftReady.current = false;
+    Promise.resolve(saveKey(DRAFT_KEY, null));
+    const ls = lastRef.current;
+    const lifts = (program[day] || []).map((ex) => {
+      const prev = ls?.lifts.find((l) => l.slot === ex.slot);
+      const chosen = prev?.name && ex.options.includes(prev.name) ? prev.name : ex.options[0];
+      const sets = Array.from({ length: ex.sets }, (_, i) => ({ w: "", r: "", ts: null }));
+      return { slot: ex.slot, name: chosen, options: ex.options, target: ex.reps, prev, sets };
+    });
+    setEntry({ date, day, lifts });
     setStartMs(null);
     setElapsed(0);
+    setTimeout(() => { draftReady.current = true; }, 0);
+  };
+
+  const discardDraft = () => {
+    if (!confirm("Discard this in-progress session? Logged-but-unsaved sets will be cleared.")) return;
+    draftReady.current = false;
+    Promise.resolve(saveKey(DRAFT_KEY, null));
+    const ls = lastRef.current;
+    const lifts = (program[day] || []).map((ex) => {
+      const prev = ls?.lifts.find((l) => l.slot === ex.slot);
+      const chosen = prev?.name && ex.options.includes(prev.name) ? prev.name : ex.options[0];
+      const sets = Array.from({ length: ex.sets }, (_, i) => ({ w: prev?.sets[i]?.w ?? "", r: "", ts: null }));
+      return { slot: ex.slot, name: chosen, options: ex.options, target: ex.reps, prev, sets };
+    });
+    setEntry({ date, day, lifts });
+    setStartMs(null);
+    setElapsed(0);
+    setTimeout(() => { draftReady.current = true; }, 0);
   };
 
   return (
@@ -348,6 +540,12 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
           : <span style={{ color: C.faint, fontSize: 12 }}>timer starts on first set</span>}
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={dateInput} />
       </div>
+
+      {restored && (
+        <div style={{ background: C.sageSoft, border: `1px solid ${C.sage}`, color: C.ink, borderRadius: 12, padding: "11px 14px", marginBottom: 12, fontSize: 13 }}>
+          Restored your in-progress session. Keep going where you left off.
+        </div>
+      )}
 
       {entry.lifts.map((lift, li) => (
         <Card key={li} style={{ marginBottom: 10 }}>
@@ -367,31 +565,65 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
 
           <button onClick={() => setVideoFor(lift.name)} style={demoBtn}>Watch form demo ↗</button>
 
-          {lift.prev && lift.prev.name === lift.name && (
-            <div style={{ color: C.faint, fontSize: 11, marginTop: 8 }}>
-              Last · {lift.prev.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}
-            </div>
-          )}
-
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 7 }}>
-            {lift.sets.map((s, si) => (
-              <div key={si} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ color: C.faint, fontSize: 12, width: 34 }}>{si + 1}</span>
-                <input inputMode="decimal" placeholder={unit} value={s.w} onChange={(e) => update(li, si, "w", e.target.value)} style={setInput} />
-                <span style={{ color: C.faint }}>×</span>
-                <input inputMode="numeric" placeholder="reps" value={s.r}
-                  onChange={(e) => update(li, si, "r", e.target.value)}
-                  onBlur={(e) => { if (e.target.value) { stampSet(li, si); startRest(); } }} style={setInput} />
-                {s.ts && <span style={{ color: C.faint, fontSize: 10, width: 52, textAlign: "right" }}>{fmtClock(s.ts)}</span>}
-              </div>
-            ))}
+            {/* header row */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", color: C.faint, fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase" }}>
+              <span style={{ width: 34 }}>Set</span>
+              <span style={{ flex: 1, textAlign: "center" }}>{unit}</span>
+              <span style={{ width: 14 }} />
+              <span style={{ flex: 1, textAlign: "center" }}>reps</span>
+              {lift.prev && lift.prev.name === lift.name && <span style={{ width: 64, textAlign: "right" }}>last</span>}
+            </div>
+            {lift.sets.map((s, si) => {
+              const prevSet = (lift.prev && lift.prev.name === lift.name) ? lift.prev.sets[si] : null;
+              return (
+                <div key={si} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: C.faint, fontSize: 12, width: 34 }}>{si + 1}</span>
+                  <input inputMode="decimal" placeholder={prevSet?.w ? String(prevSet.w) : unit} value={s.w}
+                    onChange={(e) => updateWeight(li, si, e.target.value)} style={setInput} />
+                  <span style={{ color: C.faint }}>×</span>
+                  <input inputMode="numeric" placeholder={prevSet?.r ? String(prevSet.r) : "reps"} value={s.r}
+                    onChange={(e) => update(li, si, "r", e.target.value)}
+                    onBlur={(e) => { if (e.target.value) { stampSet(li, si); startRest(); } }} style={setInput} />
+                  {(lift.prev && lift.prev.name === lift.name) && (
+                    <span style={{ color: C.faint, fontSize: 11, width: 64, textAlign: "right" }}>
+                      {prevSet ? `${prevSet.w || "–"}×${prevSet.r || "–"}` : "—"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <button onClick={() => addSet(li)} style={addSetBtn}>+ Add set</button>
+
+          {/* difficulty + note */}
+          <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+            <span style={{ color: C.faint, fontSize: 11, width: 34 }}>RPE</span>
+            <div style={{ display: "flex", gap: 4, flex: 1, flexWrap: "wrap" }}>
+              {["easy", "6", "7", "8", "9", "max"].map((v) => (
+                <button key={v} onClick={() => setNote(li, "rpe", lift.rpe === v ? "" : v)}
+                  style={{
+                    padding: "5px 9px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: FONT.body,
+                    border: `1px solid ${lift.rpe === v ? C.gold : C.line}`,
+                    background: lift.rpe === v ? C.goldSoft : "transparent",
+                    color: lift.rpe === v ? C.gold : C.dim,
+                  }}>{v}</button>
+              ))}
+            </div>
+          </div>
+          <input value={lift.note || ""} onChange={(e) => setNote(li, "note", e.target.value)}
+            placeholder="Note — how it felt, form cues, niggles…"
+            style={{ width: "100%", marginTop: 8, background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "10px 12px", fontSize: 13, fontFamily: FONT.body }} />
         </Card>
       ))}
 
       <Btn variant="quiet" onClick={addExercise} style={{ marginBottom: 10 }}>+ Add custom exercise</Btn>
       <Btn variant="solid" onClick={save}>Finish & save session</Btn>
+      {(startMs || entry.lifts.some((l) => l.sets.some((s) => s.w !== "" || s.r !== ""))) && (
+        <button onClick={discardDraft} style={{ width: "100%", marginTop: 10, padding: "11px 0", borderRadius: 12, cursor: "pointer", background: "transparent", border: `1px solid ${C.line}`, color: C.faint, fontSize: 13, fontFamily: FONT.body }}>
+          Discard in-progress session
+        </button>
+      )}
 
       {videoFor && <VideoModal name={videoFor} onClose={() => setVideoFor(null)} />}
 
@@ -407,6 +639,8 @@ function Strength({ workouts, setWorkouts, program, settings, setCelebrate }) {
 function CardioLog({ cardio, setCardio, settings, setCelebrate }) {
   const [form, setForm] = useState({ date: todayStr(), time: "", type: "Zone 2", minutes: "", zone: "2", notes: "" });
   const types = ["Zone 2", "HIIT", "Run", "Cycle", "Walk", "Row", "Swim", "Other"];
+  // autosave in-progress cardio entry (worth saving once minutes or notes are present)
+  const clearDraft = useFormDraft("cardio", form, setForm, (f) => f && (f.minutes || f.notes));
 
   const save = () => {
     if (!form.minutes) return;
@@ -417,6 +651,7 @@ function CardioLog({ cardio, setCardio, settings, setCelebrate }) {
       stats: [{ label: "Minutes", value: rec.minutes }, { label: "Zone", value: rec.zone || "—" }],
       prs: [],
     });
+    clearDraft();
     setForm({ ...form, minutes: "", notes: "" });
   };
 
@@ -477,16 +712,60 @@ function Body({ body, setBody, photos, setPhotos, settings }) {
   const [date, setDate] = useState(todayStr());
   const sites = settings.sex === "female" ? SKINFOLDS_F : SKINFOLDS_M;
 
-  const [form, setForm] = useState({ weight: "", sleep: "", stretch: "", time: "", girths: {}, skinfolds: {} });
+  const [form, setForm] = useState({ weight: "", sleep: "", stretch: "", time: "", girths: {}, skinfolds: {}, vitals: {} });
+  const draftReady = React.useRef(false);
+  const DRAFT_K = "draft:body";
+
+  // Load saved record OR an unsaved draft when the date changes.
   useEffect(() => {
-    const c = body.find((b) => b.date === date) || {};
-    setForm({ weight: c.weight ?? "", sleep: c.sleep ?? "", stretch: c.stretch ?? "", time: c.time ?? "", girths: c.girths ?? {}, skinfolds: c.skinfolds ?? {} });
+    draftReady.current = false;
+    let cancelled = false;
+    const saved = body.find((b) => b.date === date);
+    Promise.resolve(loadKey(DRAFT_K, null)).then((draft) => {
+      if (cancelled) return;
+      if (!saved && draft && draft.date === date) {
+        // restore in-progress, unsaved edits for this date
+        const { date: _d, ...f } = draft;
+        setForm({ weight: "", sleep: "", stretch: "", time: "", girths: {}, skinfolds: {}, vitals: {}, ...f });
+      } else {
+        const c = saved || {};
+        setForm({ weight: c.weight ?? "", sleep: c.sleep ?? "", stretch: c.stretch ?? "", time: c.time ?? "", girths: c.girths ?? {}, skinfolds: c.skinfolds ?? {}, vitals: c.vitals ?? {} });
+      }
+      setTimeout(() => { draftReady.current = true; }, 0);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, body]);
+
+  const bodyHasContent = (f) => f.weight || f.sleep || f.stretch || Object.values(f.girths || {}).some(Boolean) || Object.values(f.skinfolds || {}).some(Boolean) || Object.values(f.vitals || {}).some(Boolean);
+
+  // autosave unsaved edits
+  useEffect(() => {
+    if (!draftReady.current) return;
+    if (bodyHasContent(form)) saveKey(DRAFT_K, { date, ...form });
+  }, [form, date]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // flush on hide/close
+  useEffect(() => {
+    const flush = () => { try { if (bodyHasContent(form)) saveKey(DRAFT_K, { date, ...form }); } catch { /* ignore */ } };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [form, date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [saved, setSaved] = useState(false);
   const save = () => {
     const rec = { date, ...form, time: form.time || nowClock() };
     setBody([...body.filter((x) => x.date !== date), rec].sort((a, b) => a.date.localeCompare(b.date)));
+    draftReady.current = false;
+    Promise.resolve(saveKey(DRAFT_K, null));
+    setTimeout(() => { draftReady.current = true; }, 0);
     setSaved(true); setTimeout(() => setSaved(false), 1600);
   };
 
@@ -538,6 +817,35 @@ function Body({ body, setBody, photos, setPhotos, settings }) {
         <Field label={`Bodyweight`} value={form.weight} onChange={(v) => setForm({ ...form, weight: v })} suffix={unit} inputMode="decimal" />
         <Field label="Sleep" value={form.sleep} onChange={(v) => setForm({ ...form, sleep: v })} suffix="h" inputMode="decimal" />
         <Field label="Stretching" value={form.stretch} onChange={(v) => setForm({ ...form, stretch: v })} suffix="min" inputMode="numeric" />
+      </Card>
+
+      <Card title="Watch metrics">
+        <div style={{ color: C.faint, fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>
+          Glance at your Samsung watch and type the readings in. (A web app can't pull these automatically — this keeps them in one place alongside everything else.)
+        </div>
+        {(() => {
+          const setV = (k, v) => setForm({ ...form, vitals: { ...form.vitals, [k]: v } });
+          const V = form.vitals || {};
+          return (
+            <>
+              <Field label="Steps" value={V.steps ?? ""} onChange={(v) => setV("steps", v)} inputMode="numeric" />
+              <Field label="Resting HR" value={V.restingHR ?? ""} onChange={(v) => setV("restingHR", v)} suffix="bpm" inputMode="numeric" />
+              <Field label="Blood oxygen" value={V.spo2 ?? ""} onChange={(v) => setV("spo2", v)} suffix="%" inputMode="numeric" />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${C.line}` }}>
+                <span style={{ color: C.ink, fontSize: 14 }}>Blood pressure</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input inputMode="numeric" placeholder="sys" value={V.bpSys ?? ""} onChange={(e) => setV("bpSys", e.target.value)}
+                    style={{ background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "9px 11px", fontSize: 14, width: 56, textAlign: "center" }} />
+                  <span style={{ color: C.faint }}>/</span>
+                  <input inputMode="numeric" placeholder="dia" value={V.bpDia ?? ""} onChange={(e) => setV("bpDia", e.target.value)}
+                    style={{ background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "9px 11px", fontSize: 14, width: 56, textAlign: "center" }} />
+                  <span style={{ color: C.faint, fontSize: 12, width: 30 }}>mmHg</span>
+                </span>
+              </div>
+              <Field label="ECG note" value={V.ecg ?? ""} onChange={(v) => setV("ecg", v)} placeholder="e.g. sinus" />
+            </>
+          );
+        })()}
       </Card>
 
       {(bmiVal || bf != null || bmrVal) && (
@@ -613,6 +921,8 @@ function Food({ foods, setFoods, settings }) {
   const [searching, setSearching] = useState(false);
   const [err, setErr] = useState("");
   const [manual, setManual] = useState({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
+  // autosave the half-typed manual food entry
+  const clearManualDraft = useFormDraft("foodManual", manual, setManual, (m) => m && (m.name || m.kcal));
 
   const dayFoods = useMemo(() => foods.filter((f) => f.date === date), [foods, date]);
   const totals = useMemo(() => dayFoods.reduce((a, f) => ({
@@ -657,6 +967,7 @@ function Food({ foods, setFoods, settings }) {
   const addManual = () => {
     if (!manual.name || !manual.kcal) return;
     setFoods([...foods, { date, time: nowClock(), ...manual, kcal: +manual.kcal, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0, qty: 1 }]);
+    clearManualDraft();
     setManual({ name: "", kcal: "", protein: "", carbs: "", fat: "" });
   };
   const remove = (idx) => {
@@ -810,6 +1121,26 @@ function Progress({ workouts, body, photos, settings }) {
     .sort((a, b) => a.startMs - b.startMs)
     .map((w) => ({ date: fmtDate(w.date), v: Math.round((w.endMs - w.startMs) / 60000) })), [workouts]);
 
+  // rest-gap trend: avg seconds between sets and between exercises, per session
+  const restData = useMemo(() => [...workouts]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((w) => {
+      const g = restGaps(w);
+      return (g.betweenSets != null || g.betweenExercises != null)
+        ? { date: fmtDate(w.date), sets: g.betweenSets, lifts: g.betweenExercises }
+        : null;
+    })
+    .filter(Boolean), [workouts]);
+
+  const restAvg = useMemo(() => {
+    const s = restData.map((r) => r.sets).filter((x) => x != null);
+    const l = restData.map((r) => r.lifts).filter((x) => x != null);
+    return {
+      sets: s.length ? Math.round(s.reduce((a, b) => a + b, 0) / s.length) : null,
+      lifts: l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null,
+    };
+  }, [restData]);
+
   if (!exercises.length && !mData.length && !photoList.length) {
     return <Empty>Log workouts, measurements, or photos and your progress will appear here.</Empty>;
   }
@@ -889,6 +1220,33 @@ function Progress({ workouts, body, photos, settings }) {
         </Card>
       )}
 
+      {(restAvg.sets != null || restAvg.lifts != null) && (
+        <Card title="Rest between efforts">
+          <div style={{ display: "flex", gap: 10, marginBottom: restData.length > 1 ? 12 : 0 }}>
+            {restAvg.sets != null && <MiniStat label="Avg between sets" value={`${restAvg.sets}s`} sub="within an exercise" />}
+            {restAvg.lifts != null && <MiniStat label="Avg between lifts" value={`${restAvg.lifts}s`} sub="exercise transitions" />}
+          </div>
+          {restData.length > 1 && (
+            <ResponsiveContainer width="100%" height={150}>
+              <LineChart data={restData} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid stroke={C.line} vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: C.faint, fontSize: 11 }} />
+                <YAxis tick={{ fill: C.faint, fontSize: 11 }} />
+                <Tooltip contentStyle={chartTip} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <ReferenceLine y={settings.rest} stroke={C.rose} strokeDasharray="4 4"
+                  label={{ value: `target ${settings.rest}s`, fill: C.rose, fontSize: 10, position: "insideTopRight" }} />
+                <Line type="monotone" dataKey="sets" stroke={C.gold} strokeWidth={2.5} dot={{ r: 2.5 }} name="between sets (s)" connectNulls />
+                <Line type="monotone" dataKey="lifts" stroke={C.sage} strokeWidth={2} dot={{ r: 2.5 }} name="between lifts (s)" connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+          <div style={{ color: C.faint, fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+            Measured as the gap between when you log each set. Shorter rest generally means higher density and effort; longer rest favours heavier strength work. Use it to keep your rest consistent with your goal.
+          </div>
+        </Card>
+      )}
+
       {todData.length > 0 && (
         <Card title="When you train best">
           {bestWindow && (
@@ -925,6 +1283,131 @@ function Progress({ workouts, body, photos, settings }) {
           </div>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ============================== PLAN ==============================
+function Plan({ plan, setPlan, checks, setChecks, settings, setSettings }) {
+  const today = todayStr();
+  const todayChecks = checks[today] || {};
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(plan.protocol);
+
+  const toggle = (item) => {
+    const day = { ...(checks[today] || {}) };
+    day[item] = !day[item];
+    setChecks({ ...checks, [today]: day });
+  };
+
+  const doneCount = plan.checklist.filter((i) => todayChecks[i]).length;
+  const pct = plan.checklist.length ? Math.round((doneCount / plan.checklist.length) * 100) : 0;
+
+  // adherence streak: consecutive days (ending today or yesterday) with 100% done
+  const streak = useMemo(() => {
+    let s = 0;
+    for (let d = 0; d < 60; d++) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      const c = checks[date];
+      const all = c && plan.checklist.length && plan.checklist.every((i) => c[i]);
+      if (all) s++;
+      else if (d === 0) continue; // today not finished yet — don't break streak
+      else break;
+    }
+    return s;
+  }, [checks, plan.checklist]);
+
+  // last 7 days adherence %
+  const week = useMemo(() => {
+    let total = 0, hit = 0;
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+      const c = checks[date] || {};
+      plan.checklist.forEach((i) => { total++; if (c[i]) hit++; });
+    }
+    return total ? Math.round((hit / total) * 100) : 0;
+  }, [checks, plan.checklist]);
+
+  // checklist editing
+  const [newItem, setNewItem] = useState("");
+  const addItem = () => { if (newItem.trim()) { setPlan({ ...plan, checklist: [...plan.checklist, newItem.trim()] }); setNewItem(""); } };
+  const removeItem = (item) => setPlan({ ...plan, checklist: plan.checklist.filter((i) => i !== item) });
+
+  const goals = [["muscle", "Build muscle"], ["cut", "Cut / lose fat"], ["longevity", "Longevity"], ["maintain", "Maintain"]];
+
+  return (
+    <div>
+      <Card title="Goal">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {goals.map(([id, label]) => (
+            <Pill key={id} active={settings.goal === id} onClick={() => setSettings({ ...settings, goal: id })}>{label}</Pill>
+          ))}
+        </div>
+        <div style={{ color: C.faint, fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>
+          Your goal shapes the Coach advice on Home — gaining pace and volume for muscle, deficit pace for cutting, vitals and cardio for longevity.
+        </div>
+      </Card>
+
+      <Card title="Today's adherence"
+        action={<span style={{ fontSize: 13, color: pct === 100 ? C.sage : C.gold, fontWeight: 700 }}>{doneCount}/{plan.checklist.length}</span>}>
+        <div style={{ height: 8, background: C.surface2, borderRadius: 99, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? C.sage : C.gold, transition: "width .3s" }} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {plan.checklist.map((item) => {
+            const on = !!todayChecks[item];
+            return (
+              <button key={item} onClick={() => toggle(item)} style={{
+                display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", borderRadius: 11, cursor: "pointer",
+                background: on ? C.sageSoft : C.surface2, border: `1px solid ${on ? C.sage : C.line}`, textAlign: "left", fontFamily: FONT.body,
+              }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: 7, flexShrink: 0, border: `2px solid ${on ? C.sage : C.faint}`,
+                  background: on ? C.sage : "transparent", color: C.black, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800,
+                }}>{on ? "✓" : ""}</span>
+                <span style={{ color: on ? C.ink : C.dim, fontSize: 14, textDecoration: on ? "none" : "none" }}>{item}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <MiniStat label="Streak" value={`${streak}d`} sub="all items done" />
+          <MiniStat label="7-day" value={`${week}%`} sub="adherence" />
+        </div>
+        {pct === 100 && (
+          <div style={{ marginTop: 12, background: C.sageSoft, border: `1px solid ${C.sage}`, borderRadius: 12, padding: "11px 13px", color: C.ink, fontSize: 13 }}>
+            🎯 Everything done today. {streak >= 2 ? `${streak}-day streak — consistency is what builds the physique.` : "Lock in tomorrow to start a streak."}
+          </div>
+        )}
+      </Card>
+
+      <Card title="Checklist items">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {plan.checklist.map((item) => (
+            <div key={item} style={{ ...row, padding: "6px 0" }}>
+              <span style={{ color: C.dim, fontSize: 13 }}>{item}</span>
+              <button onClick={() => removeItem(item)} style={{ ...addMini, color: C.rose, borderColor: C.line }}>Remove</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <input value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder="Add a daily habit"
+            onKeyDown={(e) => e.key === "Enter" && addItem()}
+            style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 10, padding: "11px 12px", fontSize: 14 }} />
+          <button onClick={addItem} style={{ ...timerBtn, width: "auto", padding: "0 18px" }}>Add</button>
+        </div>
+      </Card>
+
+      <Card title="My protocol"
+        action={<button onClick={() => { if (editing) { setPlan({ ...plan, protocol: draft }); } setEditing(!editing); }}
+          style={{ ...addMini }}>{editing ? "Save" : "Edit"}</button>}>
+        {editing ? (
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={16}
+            style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 12, padding: "12px", fontSize: 13, lineHeight: 1.6, resize: "vertical", fontFamily: FONT.body }} />
+        ) : (
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap", color: C.dim, fontSize: 13, lineHeight: 1.7, fontFamily: FONT.body }}>{plan.protocol}</pre>
+        )}
+      </Card>
     </div>
   );
 }
@@ -1027,7 +1510,7 @@ function ProgramEditor({ program, setProgram }) {
   );
 }
 
-function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, settings, setSettings }) {
+function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, foods, setFoods, photos, setPhotos, program, setProgram, plan, setPlan, checks, setChecks, settings, setSettings }) {
   const [msg, setMsg] = useState("");
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(""), 2500); };
   const stamp = () => new Date().toISOString().slice(0, 10);
@@ -1041,7 +1524,7 @@ function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, fo
 
   const exportJSON = () => {
     download(`atelier-backup-${stamp()}.json`,
-      JSON.stringify({ exportedAt: new Date().toISOString(), version: 2, workouts, cardio, body, foods, photos, program, settings }, null, 2),
+      JSON.stringify({ exportedAt: new Date().toISOString(), version: 3, workouts, cardio, body, foods, photos, program, settings, plan, checks }, null, 2),
       "application/json");
     flash("JSON backup downloaded.");
   };
@@ -1052,9 +1535,11 @@ function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, fo
       s.lifts.forEach((l) => l.sets.forEach((st, i) => w.push([s.date, s.day, l.slot || "", l.name, i + 1, st.w, st.r]))));
     download(`atelier-workouts-${stamp()}.csv`, toCSV(w), "text/csv");
 
-    const b = [["date", "weight", "sleep", "stretch", ...GIRTHS]];
+    const b = [["date", "weight", "sleep", "stretch", "steps", "restingHR", "spo2", "bpSys", "bpDia", ...GIRTHS]];
     body.slice().sort((a, b2) => a.date.localeCompare(b2.date)).forEach((r) =>
-      b.push([r.date, r.weight ?? "", r.sleep ?? "", r.stretch ?? "", ...GIRTHS.map((g) => r.girths?.[g] || "")]));
+      b.push([r.date, r.weight ?? "", r.sleep ?? "", r.stretch ?? "",
+        r.vitals?.steps ?? "", r.vitals?.restingHR ?? "", r.vitals?.spo2 ?? "", r.vitals?.bpSys ?? "", r.vitals?.bpDia ?? "",
+        ...GIRTHS.map((g) => r.girths?.[g] || "")]));
     download(`atelier-body-${stamp()}.csv`, toCSV(b), "text/csv");
     flash("CSV files downloaded.");
   };
@@ -1071,6 +1556,8 @@ function DataPanel({ workouts, setWorkouts, cardio, setCardio, body, setBody, fo
         if (d.foods) setFoods(d.foods);
         if (d.photos) setPhotos(d.photos);
         if (d.program) setProgram(d.program);
+        if (d.plan) setPlan(d.plan);
+        if (d.checks) setChecks(d.checks);
         if (d.settings) setSettings({ ...DEFAULT_SETTINGS, ...d.settings });
         flash("Backup restored.");
       } catch { flash("Couldn't read that file. Use an Atelier JSON backup."); }
@@ -1141,10 +1628,16 @@ function History({ workouts, setWorkouts, cardio, setCardio, body, setBody }) {
                 <div style={{ color: C.faint, fontSize: 11, marginBottom: 4 }}>
                   {it.data.startMs ? fmtClock(it.data.startMs) : ""}
                   {it.data.startMs && it.data.endMs ? ` · ${fmtDur(it.data.endMs - it.data.startMs)}` : ""}
+                  {(() => { const g = restGaps(it.data); return g.betweenSets != null ? ` · rest ~${g.betweenSets}s/set` : ""; })()}
+                  {(() => { const g = restGaps(it.data); return g.betweenExercises != null ? ` · ${g.betweenExercises}s between lifts` : ""; })()}
                 </div>
               )}
               {it.data.lifts.map((l) => (
-                <div key={l.name}><span style={{ color: C.ink }}>{l.name}:</span> {l.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}</div>
+                <div key={l.name}>
+                  <span style={{ color: C.ink }}>{l.name}:</span> {l.sets.map((s) => `${s.w || "–"}×${s.r || "–"}`).join("  ")}
+                  {l.rpe && <span style={{ color: C.gold, fontSize: 11 }}> · RPE {l.rpe}</span>}
+                  {l.note && <span style={{ color: C.faint, fontSize: 11, fontStyle: "italic" }}> · {l.note}</span>}
+                </div>
               ))}
             </div>
           )}
@@ -1155,6 +1648,10 @@ function History({ workouts, setWorkouts, cardio, setCardio, body, setBody }) {
               {it.data.weight && <span style={chip}>⚖ {it.data.weight}</span>}
               {it.data.sleep && <span style={chip}>😴 {it.data.sleep}h</span>}
               {it.data.stretch && <span style={chip}>🧘 {it.data.stretch}m</span>}
+              {it.data.vitals?.steps && <span style={chip}>👟 {it.data.vitals.steps}</span>}
+              {it.data.vitals?.restingHR && <span style={chip}>❤️ {it.data.vitals.restingHR}</span>}
+              {it.data.vitals?.spo2 && <span style={chip}>🫁 {it.data.vitals.spo2}%</span>}
+              {it.data.vitals?.bpSys && it.data.vitals?.bpDia && <span style={chip}>🩸 {it.data.vitals.bpSys}/{it.data.vitals.bpDia}</span>}
             </div>
           )}
         </Card>
